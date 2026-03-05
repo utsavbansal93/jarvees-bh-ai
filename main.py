@@ -76,6 +76,16 @@ def update_priority(task_id: int, body: PriorityUpdate):
     return task
 
 
+class ReorderRequest(BaseModel):
+    order: list[int]
+
+@app.post("/api/tasks/reorder")
+def reorder_tasks(body: ReorderRequest):
+    """Persist a user-defined drag-and-drop sort order for top-level tasks."""
+    db.reorder_tasks(body.order)
+    return {"ok": True}
+
+
 # ── Undo ──────────────────────────────────────────────────────────────────────
 
 @app.post("/api/undo")
@@ -192,6 +202,29 @@ def chat(body: ChatRequest):
         elif a == "delete_task":
             db.delete_task(task_id)
 
+    # ── Make subtask (nest one existing task under another) ──────────────────
+    elif a == "make_subtask":
+        child_id  = _resolve_by_number(action.get("task_number"), tasks)
+        parent_id = _resolve_by_number(action.get("parent_number"), tasks)
+        if child_id is None or parent_id is None or child_id == parent_id:
+            result["message"] = (
+                "I couldn't find those tasks. "
+                "Try 'make task 5 a subtask of task 4'."
+            )
+        else:
+            result["task"] = db.make_subtask(child_id, parent_id)
+
+    # ── Update priority ───────────────────────────────────────────────────────
+    elif a == "update_priority":
+        task_id  = _resolve_task(action, tasks)
+        priority = action.get("priority", "medium")
+        if task_id is None:
+            result["message"] = "I couldn't find that task. Try 'set task 6 to high priority'."
+        elif priority not in ("high", "medium", "low"):
+            result["message"] = "Priority must be high, medium, or low."
+        else:
+            result["task"] = db.update_task_priority(task_id, priority)
+
     # ── Undo via AI (catch-all for "please undo" phrased differently) ─────────
     elif a == "undo":
         action_type, _ = db.undo_last()
@@ -205,6 +238,17 @@ def chat(body: ChatRequest):
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _resolve_by_number(n, tasks: list[dict]) -> int | None:
+    """Resolve a 1-based task number directly to a task ID."""
+    try:
+        n = int(n)
+        if 1 <= n <= len(tasks):
+            return tasks[n - 1]["id"]
+    except (TypeError, ValueError):
+        pass
+    return None
+
 
 def _resolve_task(action: dict, tasks: list[dict]) -> int | None:
     number = action.get("task_number")

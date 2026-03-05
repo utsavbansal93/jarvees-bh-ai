@@ -55,10 +55,12 @@ def init_db():
                 created_at    TEXT DEFAULT (datetime('now'))
             )
         """)
-        # Migrate existing DBs that don't have parent_id yet
+        # Migrate existing DBs
         existing = [r[1] for r in c.execute("PRAGMA table_info(tasks)").fetchall()]
         if "parent_id" not in existing:
             c.execute("ALTER TABLE tasks ADD COLUMN parent_id INTEGER")
+        if "sort_order" not in existing:
+            c.execute("ALTER TABLE tasks ADD COLUMN sort_order INTEGER")
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -99,6 +101,7 @@ def get_active_tasks() -> list[dict]:
             SELECT * FROM tasks
             WHERE status IN ('active', 'completed')
             ORDER BY
+                CASE WHEN sort_order IS NOT NULL THEN sort_order ELSE 999999 END,
                 CASE status WHEN 'active' THEN 0 ELSE 1 END,
                 CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
                 (deadline IS NULL),
@@ -127,11 +130,21 @@ def has_undo() -> bool:
 
 def add_task(task: dict, parent_id: int | None = None) -> dict:
     with _conn() as c:
+        # Top-level tasks get a sort_order appended to the end; subtasks don't need one
+        sort_order = None
+        if not parent_id:
+            max_order = c.execute(
+                "SELECT COALESCE(MAX(sort_order), 0) FROM tasks WHERE parent_id IS NULL"
+            ).fetchone()[0]
+            sort_order = max_order + 1
+
         cur = c.execute("""
             INSERT INTO tasks
-                (title, deadline, estimated_duration, priority, task_type, recurrence, parent_id)
+                (title, deadline, estimated_duration, priority, task_type,
+                 recurrence, parent_id, sort_order)
             VALUES
-                (:title, :deadline, :estimated_duration, :priority, :task_type, :recurrence, :parent_id)
+                (:title, :deadline, :estimated_duration, :priority, :task_type,
+                 :recurrence, :parent_id, :sort_order)
         """, {
             "title":              task.get("title", "Untitled"),
             "deadline":           task.get("deadline"),
@@ -140,6 +153,7 @@ def add_task(task: dict, parent_id: int | None = None) -> dict:
             "task_type":          task.get("task_type", "quick"),
             "recurrence":         task.get("recurrence"),
             "parent_id":          parent_id,
+            "sort_order":         sort_order,
         })
         new = _row(c, cur.lastrowid)
         _log(c, "add", new)
@@ -272,13 +286,50 @@ def undo_last() -> tuple[str, dict] | tuple[None, None]:
                     INSERT INTO tasks
                         (id, title, deadline, estimated_duration, priority, task_type,
                          recurrence, status, completed_at, created_at,
-                         missed_count, escalation_level, calendar_event_id, parent_id)
+                         missed_count, escalation_level, calendar_event_id, parent_id, sort_order)
                     VALUES
                         (:id, :title, :deadline, :estimated_duration, :priority, :task_type,
                          :recurrence, :status, :completed_at, :created_at,
-                         :missed_count, :escalation_level, :calendar_event_id, :parent_id)
-                """, {**snapshot, "parent_id": snapshot.get("parent_id")})
+                         :missed_count, :escalation_level, :calendar_event_id, :parent_id, :sort_order)
+                """, {**snapshot,
+                      "parent_id":  snapshot.get("parent_id"),
+                      "sort_order": snapshot.get("sort_order")})
+
+        elif action == "update_priority":
+            # Undo a priority change → restore the original priority
+            c.execute(
+                "UPDATE tasks SET priority=? WHERE id=?",
+                (snapshot.get("priority"), tid)
+            )
+
+        elif action == "make_subtask":
+            # Undo make_subtask → restore original parent_id and sort_order
+            c.execute(
+                "UPDATE tasks SET parent_id=?, sort_order=? WHERE id=?",
+                (snapshot.get("parent_id"), snapshot.get("sort_order"), tid)
+            )
 
         c.execute("DELETE FROM undo_log WHERE id=?", (log["id"],))
 
     return action, snapshot
+
+
+def make_subtask(child_id: int, parent_id: int) -> dict | None:
+    """Nest an existing top-level task under a parent. Clears its sort_order."""
+    with _conn() as c:
+        before = _row(c, child_id)
+        if not before:
+            return None
+        _log(c, "make_subtask", before)
+        c.execute(
+            "UPDATE tasks SET parent_id=?, sort_order=NULL WHERE id=?",
+            (parent_id, child_id)
+        )
+        return _row(c, child_id)
+
+
+def reorder_tasks(ordered_ids: list[int]) -> None:
+    """Persist a user-defined display order for top-level tasks."""
+    with _conn() as c:
+        for pos, task_id in enumerate(ordered_ids, start=1):
+            c.execute("UPDATE tasks SET sort_order=? WHERE id=?", (pos, task_id))

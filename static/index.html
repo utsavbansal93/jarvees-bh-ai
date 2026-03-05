@@ -556,6 +556,24 @@
     .p-dot-medium { background: #f59e0b; }
     .p-dot-low    { background: var(--low); }
 
+    /* ── Drag handle ─────────────────────────────────────────────────────── */
+    .drag-handle {
+      color: var(--border);
+      font-size: 15px;
+      line-height: 1;
+      flex-shrink: 0;
+      cursor: grab;
+      user-select: none;
+      padding: 2px 1px 0;
+      transition: color .12s;
+    }
+    .task-card:hover .drag-handle { color: #cbd5e1; }
+
+    /* ── Drag and drop states ─────────────────────────────────────────────── */
+    .task-group.dragging { opacity: 0.38; }
+    .task-group.drag-before { border-top: 2px solid var(--brand); padding-top: 3px; border-radius: 10px; }
+    .task-group.drag-after  { border-bottom: 2px solid var(--brand); padding-bottom: 3px; border-radius: 10px; }
+
     /* ── Toast ───────────────────────────────────────────────────────────── */
     #toast {
       position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
@@ -764,6 +782,7 @@ function renderTasks() {
 
     const parentCard = `
       <div class="task-card ${done ? 'done' : ''}" data-id="${t.id}">
+        <span class="drag-handle" title="Drag to reorder">⠿</span>
         <span class="task-num">${n}</span>
         <input type="checkbox" class="task-check" ${done ? 'checked' : ''}
           onchange="toggleTask(${t.id}, this.checked)" />
@@ -798,6 +817,7 @@ function renderTasks() {
   }).join('');
 
   scroll.innerHTML = html;
+  initDragDrop();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -967,6 +987,93 @@ async function refreshClaude() {
     btn.disabled = false;
     btn.textContent = '✦ Switch back to Claude';
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Drag and drop task reordering
+// Only top-level task groups are draggable. Subtasks move with their parent.
+// New order is persisted via POST /api/tasks/reorder immediately on drop.
+// ═══════════════════════════════════════════════════════════════════════════════
+let _dragSrcEl  = null;
+let _dropBefore = true;  // insert before (true) or after (false) the target
+
+function initDragDrop() {
+  document.querySelectorAll('#taskScroll > .task-group').forEach(g => {
+    g.setAttribute('draggable', 'true');
+    g.addEventListener('dragstart', _onDragStart);
+    g.addEventListener('dragover',  _onDragOver);
+    g.addEventListener('dragleave', _onDragLeave);
+    g.addEventListener('drop',      _onDrop);
+    g.addEventListener('dragend',   _onDragEnd);
+  });
+}
+
+function _clearDragIndicators() {
+  document.querySelectorAll('.task-group.drag-before, .task-group.drag-after')
+    .forEach(el => el.classList.remove('drag-before', 'drag-after'));
+}
+
+function _onDragStart(e) {
+  _dragSrcEl = this;
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', '');
+  // Delay class so the drag ghost snapshot captures the original look
+  setTimeout(() => this.classList.add('dragging'), 0);
+}
+
+function _onDragOver(e) {
+  e.preventDefault();
+  if (this === _dragSrcEl) return;
+  e.dataTransfer.dropEffect = 'move';
+  _clearDragIndicators();
+  const rect = this.getBoundingClientRect();
+  _dropBefore = e.clientY < rect.top + rect.height / 2;
+  this.classList.add(_dropBefore ? 'drag-before' : 'drag-after');
+}
+
+function _onDragLeave(e) {
+  if (!this.contains(e.relatedTarget)) {
+    this.classList.remove('drag-before', 'drag-after');
+  }
+}
+
+async function _onDrop(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const target = this;
+  _clearDragIndicators();
+  if (!_dragSrcEl || _dragSrcEl === target) return;
+
+  // Move in DOM immediately (optimistic update)
+  const scroll = document.getElementById('taskScroll');
+  if (_dropBefore) {
+    scroll.insertBefore(_dragSrcEl, target);
+  } else {
+    scroll.insertBefore(_dragSrcEl, target.nextSibling);
+  }
+
+  // Collect new order of parent task IDs from current DOM
+  const newOrder = [...scroll.querySelectorAll('.task-group')]
+    .map(g => parseInt(g.querySelector('.task-card[data-id]').dataset.id));
+
+  try {
+    await api('/api/tasks/reorder', {
+      method: 'POST',
+      body: JSON.stringify({ order: newOrder }),
+    });
+    // Silently update in-memory tasks array so undo state stays correct
+    tasks = await api('/api/tasks');
+    refreshUndoBtn();
+  } catch {
+    toast('Could not save order — try again.');
+    await loadTasks(); // revert to server state
+  }
+}
+
+function _onDragEnd() {
+  if (_dragSrcEl) _dragSrcEl.classList.remove('dragging');
+  _clearDragIndicators();
+  _dragSrcEl = null;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

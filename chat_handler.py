@@ -95,6 +95,12 @@ Return ONLY a valid JSON object. Choose the right action:
 {{"action":"uncomplete_task","task_number":2,"message":"..."}}
 {{"action":"delete_task","task_title":"keyword","message":"..."}}
 
+── MAKE SUBTASK (nest an existing task under another existing task) ──
+{{"action":"make_subtask","task_number":5,"parent_number":4,"message":"'Create agreement' is now a subtask of 'Check on partnership'."}}
+
+── UPDATE PRIORITY of an existing task ──
+{{"action":"update_priority","task_number":6,"priority":"high","message":"'Call Shantanu' is now high priority."}}
+
 ── INFORMATIONAL (no list change) ──
 {{"action":"chat","message":"..."}}
 
@@ -102,6 +108,8 @@ Rules:
 - Use add_task_with_subtasks when the user describes ONE goal that has multiple steps/components
 - Use add_multiple_tasks when the user lists several UNRELATED tasks together
 - Use add_task for a single standalone task
+- Use make_subtask when the user says "make X a subtask/subsection of Y" or "nest X under Y" — task_number is the child, parent_number is the parent
+- Use update_priority when the user says to change the priority of an existing task to high/medium/low
 - Smart duration defaults: errand=20, call=15, gym=60, meeting=30, report=90, email=10
 - Priority default: medium unless context implies urgency
 - Resolve relative dates (today, Friday, end of month) against today: {today}
@@ -125,8 +133,15 @@ def _is_billing_error(e: Exception) -> bool:
 
 
 def _is_gemini_quota_error(e: Exception) -> bool:
+    """Permanent session-level limit (quota/rate) — skip model for rest of session."""
     s = str(e).lower()
     return "quota" in s or "resource exhausted" in s or "rate limit" in s or "429" in s
+
+
+def _is_gemini_transient_error(e: Exception) -> bool:
+    """Temporary unavailability (overload/503) — try next model but don't blacklist."""
+    s = str(e).lower()
+    return "503" in s or "unavailable" in s or "overloaded" in s or "service unavailable" in s
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -195,7 +210,11 @@ def process_chat(user_message: str, current_tasks: list[dict]) -> tuple[dict, st
                 _failed_gemini_models.add(model)
                 print(f"[Jarvees] {model} quota hit — trying next model in cascade.")
                 continue
-            raise  # non-quota error — surface it
+            if _is_gemini_transient_error(e):
+                # Don't blacklist — just skip for this request, retry eligible next time
+                print(f"[Jarvees] {model} temporarily unavailable (503) — trying next model.")
+                continue
+            raise  # genuine unexpected error — surface it
 
     # All models exhausted
     raise Exception(

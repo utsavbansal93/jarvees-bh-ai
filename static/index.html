@@ -1,0 +1,1160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Jarvees</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --brand:        #6366f1;
+      --brand-dark:   #4f46e5;
+      --brand-light:  #e0e7ff;
+      --bg:           #f1f5f9;
+      --card:         #ffffff;
+      --text:         #1e293b;
+      --muted:        #64748b;
+      --border:       #e2e8f0;
+      --high:         #ef4444;
+      --medium:       #f59e0b;
+      --low:          #22c55e;
+      --done-color:   #94a3b8;
+      --shadow:       0 1px 3px rgba(0,0,0,.07), 0 1px 2px rgba(0,0,0,.04);
+      --shadow-md:    0 4px 12px rgba(0,0,0,.09), 0 2px 4px rgba(0,0,0,.05);
+    }
+
+    html, body {
+      height: 100%;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    body { display: flex; flex-direction: column; overflow: hidden; }
+
+    /* ── Header ─────────────────────────────────────────────────────────── */
+    header {
+      height: 58px;
+      background: var(--card);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      flex-shrink: 0;
+      box-shadow: var(--shadow);
+      z-index: 20;
+    }
+
+    .logo {
+      font-size: 19px;
+      font-weight: 700;
+      color: var(--brand);
+      letter-spacing: -.4px;
+    }
+    .logo span {
+      font-weight: 400;
+      font-size: 12px;
+      color: var(--muted);
+      margin-left: 8px;
+      letter-spacing: 0;
+    }
+
+    .header-actions { display: flex; gap: 8px; }
+
+    .btn {
+      padding: 6px 13px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      transition: all .15s;
+      font-family: inherit;
+    }
+    .btn:hover:not(:disabled) { background: var(--bg); color: var(--text); }
+    .btn:disabled { opacity: .4; cursor: default; }
+    .btn.active { border-color: var(--brand); color: var(--brand); background: var(--brand-light); }
+
+    /* ── Main layout ─────────────────────────────────────────────────────── */
+    main {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 400px;
+      overflow: hidden;
+    }
+
+    /* ── Task panel ──────────────────────────────────────────────────────── */
+    .task-panel {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      border-right: 1px solid var(--border);
+    }
+
+    .panel-head {
+      padding: 18px 24px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+      border-bottom: 1px solid var(--border);
+      background: var(--card);
+    }
+
+    .panel-title {
+      font-size: 14px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .count-pill {
+      background: var(--brand-light);
+      color: var(--brand);
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 99px;
+    }
+
+    .task-scroll {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    /* ── Task card ───────────────────────────────────────────────────────── */
+    .task-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 11px 16px;
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      box-shadow: var(--shadow);
+      transition: box-shadow .18s, opacity .18s;
+    }
+    .task-card:hover { box-shadow: var(--shadow-md); }
+    .task-card.done  { opacity: .58; }
+
+    .task-num {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      min-width: 20px;
+      text-align: right;
+      padding-top: 3px;
+      flex-shrink: 0;
+      user-select: none;
+    }
+
+    .task-check {
+      width: 17px;
+      height: 17px;
+      margin-top: 3px;
+      flex-shrink: 0;
+      cursor: pointer;
+      accent-color: var(--brand);
+    }
+
+    .task-body { flex: 1; min-width: 0; }
+
+    .task-title {
+      font-size: 14px;
+      font-weight: 500;
+      line-height: 1.4;
+      word-break: break-word;
+      color: var(--text);
+    }
+    .done .task-title { text-decoration: line-through; color: var(--done-color); }
+
+    .task-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-top: 6px;
+    }
+
+    .badge {
+      font-size: 11px;
+      font-weight: 500;
+      padding: 2px 7px;
+      border-radius: 5px;
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+    }
+    .b-deadline  { background: #eff6ff; color: #3b82f6; }
+    .b-duration  { background: #f8fafc; color: var(--muted); border: 1px solid var(--border); }
+    .b-high      { background: #fef2f2; color: var(--high); }
+    .b-medium    { background: #fffbeb; color: #b45309; }
+    .b-low       { background: #f0fdf4; color: #15803d; }
+    .b-recurring { background: #f5f3ff; color: #7c3aed; }
+
+    /* ── Subtasks ────────────────────────────────────────────────────────── */
+    .task-group { display: flex; flex-direction: column; gap: 4px; }
+
+    .subtask-list {
+      margin-left: 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding-left: 12px;
+      border-left: 2px solid var(--brand-light);
+    }
+
+    .task-card.subtask {
+      background: #fafbff;
+      border-color: #e8ebf8;
+      box-shadow: none;
+      padding: 8px 14px;
+    }
+    .task-card.subtask .task-title { font-size: 13px; font-weight: 400; }
+    .task-card.subtask .task-num   { font-size: 10px; }
+
+    .progress-badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 5px;
+      background: var(--brand-light);
+      color: var(--brand);
+    }
+    .progress-badge.all-done {
+      background: #dcfce7;
+      color: #15803d;
+    }
+
+    /* ── Empty state ─────────────────────────────────────────────────────── */
+    .empty-state {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      color: var(--muted);
+      padding: 40px;
+      text-align: center;
+    }
+    .empty-icon { font-size: 38px; }
+    .empty-state p { font-size: 14px; line-height: 1.6; max-width: 260px; }
+
+    /* ── Chat panel ──────────────────────────────────────────────────────── */
+    .chat-panel {
+      display: flex;
+      flex-direction: column;
+      background: var(--card);
+      overflow: hidden;
+    }
+
+    .chat-head {
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--muted);
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+    .online-dot {
+      width: 7px; height: 7px;
+      background: #22c55e;
+      border-radius: 50%;
+    }
+
+    .chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .msg-wrap { display: flex; flex-direction: column; gap: 3px; }
+    .msg-wrap.user   { align-items: flex-end; }
+    .msg-wrap.jarvees{ align-items: flex-start; }
+
+    .msg {
+      max-width: 82%;
+      padding: 10px 14px;
+      border-radius: 14px;
+      font-size: 13.5px;
+      line-height: 1.55;
+      animation: fadeUp .2s ease;
+    }
+    .msg.jarvees {
+      background: var(--bg);
+      color: var(--text);
+      border-bottom-left-radius: 4px;
+    }
+    .msg.user {
+      background: var(--brand);
+      color: #fff;
+      border-bottom-right-radius: 4px;
+    }
+    .msg-time {
+      font-size: 10px;
+      color: var(--muted);
+      padding: 0 4px;
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(5px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Typing indicator */
+    .typing {
+      display: inline-flex;
+      gap: 4px;
+      padding: 11px 14px;
+      background: var(--bg);
+      border-radius: 14px;
+      border-bottom-left-radius: 4px;
+      align-self: flex-start;
+    }
+    .typing span {
+      width: 6px; height: 6px;
+      background: var(--muted);
+      border-radius: 50%;
+      animation: dot 1.2s infinite;
+    }
+    .typing span:nth-child(2) { animation-delay: .2s; }
+    .typing span:nth-child(3) { animation-delay: .4s; }
+    @keyframes dot {
+      0%, 60%, 100% { transform: translateY(0); }
+      30%           { transform: translateY(-5px); }
+    }
+
+    /* ── Chat input ──────────────────────────────────────────────────────── */
+    .chat-input-row {
+      padding: 14px 18px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    #chatInput {
+      flex: 1;
+      padding: 10px 14px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font-size: 13.5px;
+      font-family: inherit;
+      color: var(--text);
+      resize: none;
+      outline: none;
+      height: 42px;
+      min-height: 42px;
+      max-height: 110px;
+      overflow-y: auto;
+      transition: border-color .15s;
+      line-height: 1.4;
+    }
+    #chatInput:focus  { border-color: var(--brand); }
+    #chatInput::placeholder { color: #94a3b8; }
+
+    #sendBtn {
+      width: 42px; height: 42px;
+      background: var(--brand);
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 17px;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+      transition: background .15s;
+    }
+    #sendBtn:hover:not(:disabled) { background: var(--brand-dark); }
+    #sendBtn:disabled { opacity: .5; cursor: default; }
+
+    /* ── Archive modal ───────────────────────────────────────────────────── */
+    .overlay {
+      position: fixed; inset: 0;
+      background: rgba(15,23,42,.45);
+      z-index: 50;
+      display: flex; align-items: center; justify-content: center;
+      padding: 24px;
+      opacity: 0; pointer-events: none;
+      transition: opacity .2s;
+    }
+    .overlay.open { opacity: 1; pointer-events: all; }
+
+    .modal {
+      background: var(--card);
+      border-radius: 16px;
+      width: 100%; max-width: 580px;
+      max-height: 78vh;
+      display: flex; flex-direction: column;
+      box-shadow: 0 24px 64px rgba(0,0,0,.18);
+      transform: translateY(10px);
+      transition: transform .22s;
+    }
+    .overlay.open .modal { transform: translateY(0); }
+
+    .modal-head {
+      padding: 18px 22px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+      flex-shrink: 0;
+    }
+    .modal-head h2 { font-size: 15px; font-weight: 600; }
+    .modal-close {
+      background: none; border: none; font-size: 22px;
+      color: var(--muted); cursor: pointer;
+      border-radius: 6px; padding: 2px 6px; line-height: 1;
+    }
+    .modal-close:hover { background: var(--bg); }
+
+    .modal-body {
+      flex: 1; overflow-y: auto;
+      padding: 14px 22px;
+      display: flex; flex-direction: column; gap: 8px;
+    }
+
+    .arc-item {
+      display: flex; align-items: center; gap: 12px;
+      padding: 11px 14px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    .arc-item .arc-body { flex: 1; min-width: 0; }
+    .arc-title {
+      font-size: 13.5px;
+      color: var(--done-color);
+      text-decoration: line-through;
+      word-break: break-word;
+    }
+    .arc-date { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+
+    .del-btn {
+      background: none; border: none;
+      color: #fca5a5; cursor: pointer;
+      font-size: 15px; padding: 4px 6px;
+      border-radius: 5px;
+      transition: color .15s, background .15s;
+      flex-shrink: 0;
+    }
+    .del-btn:hover { color: var(--high); background: #fef2f2; }
+
+    .modal-empty {
+      text-align: center; padding: 32px 0;
+      color: var(--muted); font-size: 13.5px;
+    }
+
+    /* ── Chat history CTA ───────────────────────────────────────────────── */
+    #historyCta { flex-shrink: 0; padding: 10px 18px 0; }
+
+    .history-cta-btn {
+      width: 100%;
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px dashed var(--border);
+      background: var(--bg);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all .15s;
+      text-align: left;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .history-cta-btn:hover, .history-cta-btn.open {
+      border-color: var(--brand);
+      color: var(--brand);
+      background: var(--brand-light);
+    }
+
+    .history-panel {
+      display: none;
+      flex-direction: column;
+      gap: 8px;
+      padding: 6px 0;
+      max-height: 300px;
+      overflow-y: auto;
+      border-bottom: 1px solid var(--border);
+      margin: 6px 0 0;
+    }
+    .history-panel.open { display: flex; }
+
+    .history-divider {
+      text-align: center;
+      font-size: 11px;
+      color: var(--muted);
+      padding: 2px 0 6px;
+    }
+
+    .history-msgs { display: flex; flex-direction: column; gap: 8px; }
+
+    .msg.history-msg { opacity: 0.7; }
+
+    .history-pagination {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 6px 0 2px;
+      font-size: 12px;
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+    .history-pagination .btn {
+      padding: 3px 10px;
+      font-size: 11px;
+    }
+
+    /* ── Model badge ─────────────────────────────────────────────────────── */
+    .model-badge {
+      font-size: 10px;
+      font-weight: 600;
+      padding: 1px 6px;
+      border-radius: 4px;
+      display: inline-block;
+      margin-top: 3px;
+    }
+    .model-claude  { background: #ede9fe; color: #6d28d9; }
+    .model-gemini  { background: #fef9c3; color: #854d0e; }
+    .model-system  { background: #f1f5f9; color: #64748b; }
+
+    /* ── Toast ───────────────────────────────────────────────────────────── */
+    #toast {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+      background: #1e293b; color: #fff;
+      padding: 9px 18px; border-radius: 8px;
+      font-size: 13px; font-weight: 500;
+      opacity: 0; pointer-events: none;
+      transition: opacity .2s;
+      z-index: 100;
+    }
+    #toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ──────────────────────────────────────────────────────────────── -->
+<header>
+  <div class="logo">Jarvees <span>your personal AI assistant</span></div>
+  <div class="header-actions">
+    <button class="btn" id="undoBtn" onclick="doUndo()" disabled title="Undo last action (⌘Z)">
+      ↩ Undo
+    </button>
+    <button class="btn" id="refreshClaudeBtn" onclick="refreshClaude()" style="display:none" title="Retry with Claude">
+      ✦ Switch back to Claude
+    </button>
+    <button class="btn" onclick="openArchive()">
+      📦 Archived
+    </button>
+  </div>
+</header>
+
+<!-- ── Main ────────────────────────────────────────────────────────────────── -->
+<main>
+
+  <!-- Task list -->
+  <div class="task-panel">
+    <div class="panel-head">
+      <div class="panel-title">
+        Your Tasks
+        <span class="count-pill" id="taskCount">0</span>
+      </div>
+    </div>
+    <div class="task-scroll" id="taskScroll">
+      <!-- tasks rendered here -->
+    </div>
+  </div>
+
+  <!-- Chat -->
+  <div class="chat-panel">
+    <div class="chat-head">
+      <div class="online-dot"></div>
+      Jarvees
+    </div>
+    <div id="historyCta"></div>
+    <div class="chat-messages" id="chatMessages"></div>
+    <div class="chat-input-row">
+      <textarea id="chatInput" placeholder="Add a task, mark one done, ask anything…"></textarea>
+      <button id="sendBtn" onclick="sendChat()" title="Send (Enter)">↑</button>
+    </div>
+  </div>
+
+</main>
+
+<!-- ── Archive modal ────────────────────────────────────────────────────────── -->
+<div class="overlay" id="archiveOverlay" onclick="overlayClick(event)">
+  <div class="modal">
+    <div class="modal-head">
+      <h2>📦 Archived Tasks</h2>
+      <button class="modal-close" onclick="closeArchive()">×</button>
+    </div>
+    <div class="modal-body" id="archiveBody"></div>
+  </div>
+</div>
+
+<!-- ── Toast ────────────────────────────────────────────────────────────────── -->
+<div id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════════
+// State
+// ═══════════════════════════════════════════════════════════════════════════════
+let tasks = [];
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Chat history (localStorage)
+// ─ Keeps messages from at most MAX_SESSIONS prior sessions, capped at MAX_MSGS.
+// ─ Each page load = a new session (identified by its start timestamp).
+// ═══════════════════════════════════════════════════════════════════════════════
+const HISTORY_KEY  = 'jarvees_history';
+const MAX_MSGS     = 40;
+const MAX_SESSIONS = 2;   // how many *previous* sessions to retain
+const PAGE_SIZE    = 10;
+
+// Unique ID for this page-load session
+const _sessionId = Date.now().toString();
+let _historyOpen = false;
+let _historyPage = 0;
+
+function _loadHistory() {
+  try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); }
+  catch { return []; }
+}
+
+function _saveHistory(msgs) {
+  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(msgs)); }
+  catch { /* ignore quota errors */ }
+}
+
+/** Keep only the last MAX_SESSIONS+1 sessions (including current) and MAX_MSGS total. */
+function _pruneHistory(msgs) {
+  const allSessions  = [...new Set(msgs.map(m => m.sessionId))];
+  // +1 because current session counts too; we keep MAX_SESSIONS *previous* ones
+  const keepSessions = allSessions.slice(-(MAX_SESSIONS + 1));
+  let pruned = msgs.filter(m => keepSessions.includes(m.sessionId));
+  if (pruned.length > MAX_MSGS) pruned = pruned.slice(pruned.length - MAX_MSGS);
+  return pruned;
+}
+
+/** Save one message to history. Called by addMsg for every real message. */
+function _persistMsg(role, text, model) {
+  const history = _loadHistory();
+  history.push({
+    role, text, model,
+    time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    sessionId: _sessionId,
+  });
+  _saveHistory(_pruneHistory(history));
+}
+
+/** Return messages from the most recent *previous* session (not the current one). */
+function _getPrevSessionMsgs() {
+  const all  = _loadHistory().filter(m => m.sessionId !== _sessionId);
+  if (!all.length) return [];
+  const sessions = [...new Set(all.map(m => m.sessionId))];
+  const lastPrev = sessions[sessions.length - 1];
+  return all.filter(m => m.sessionId === lastPrev);
+}
+
+// ── History CTA rendering ─────────────────────────────────────────────────────
+
+function initHistoryCta() {
+  const prev = _getPrevSessionMsgs();
+  if (!prev.length) return;
+
+  const cta = document.getElementById('historyCta');
+  const n   = prev.length;
+  cta.innerHTML = `
+    <button class="history-cta-btn" id="historyCtaBtn" onclick="toggleHistory()">
+      📜 <span>${n} message${n !== 1 ? 's' : ''} from previous session</span>
+      <span id="historyChevron" style="margin-left:auto">▾</span>
+    </button>
+    <div class="history-panel" id="historyPanel"></div>`;
+}
+
+function toggleHistory() {
+  const panel   = document.getElementById('historyPanel');
+  const btn     = document.getElementById('historyCtaBtn');
+  const chevron = document.getElementById('historyChevron');
+  _historyOpen  = !_historyOpen;
+
+  if (_historyOpen) {
+    _historyPage = 0;
+    renderHistoryPage();
+    panel.classList.add('open');
+    btn.classList.add('open');
+    chevron.textContent = '▴';
+  } else {
+    panel.classList.remove('open');
+    btn.classList.remove('open');
+    chevron.textContent = '▾';
+  }
+}
+
+function renderHistoryPage() {
+  const prev       = _getPrevSessionMsgs();
+  const total      = prev.length;
+  const start      = _historyPage * PAGE_SIZE;
+  const end        = Math.min(start + PAGE_SIZE, total);
+  const page       = prev.slice(start, end);
+  const totalPages = Math.ceil(total / PAGE_SIZE);
+
+  const MODEL_LABELS = { claude: '✦ Claude', gemini: '✦ Gemini', system: 'System', error: '⚠ Error' };
+
+  const msgsHtml = page.map(m => {
+    const badge = (m.role === 'jarvees' && m.model)
+      ? `<span class="model-badge model-${m.model}">${MODEL_LABELS[m.model] || m.model}</span>`
+      : '';
+    return `
+      <div class="msg-wrap ${m.role}">
+        <div class="msg ${m.role} history-msg">${esc(m.text)}</div>
+        ${badge}
+        <span class="msg-time">${m.time}</span>
+      </div>`;
+  }).join('');
+
+  const pager = totalPages > 1 ? `
+    <div class="history-pagination">
+      <button class="btn" onclick="historyPrev()" ${_historyPage === 0 ? 'disabled' : ''}>← Prev</button>
+      <span>${_historyPage + 1} / ${totalPages}</span>
+      <button class="btn" onclick="historyNext()" ${_historyPage >= totalPages - 1 ? 'disabled' : ''}>Next →</button>
+    </div>` : '';
+
+  document.getElementById('historyPanel').innerHTML = `
+    <div class="history-divider">— Previous session —</div>
+    <div class="history-msgs" style="padding:0 18px">${msgsHtml}</div>
+    ${pager}`;
+}
+
+function historyPrev() {
+  if (_historyPage > 0) { _historyPage--; renderHistoryPage(); }
+}
+function historyNext() {
+  if ((_historyPage + 1) * PAGE_SIZE < _getPrevSessionMsgs().length) {
+    _historyPage++;
+    renderHistoryPage();
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// API helpers
+// ═══════════════════════════════════════════════════════════════════════════════
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...opts,
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`${res.status}: ${body}`);
+  }
+  return res.json();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Load & render tasks
+// ═══════════════════════════════════════════════════════════════════════════════
+async function loadTasks() {
+  tasks = await api('/api/tasks');
+  renderTasks();
+  refreshUndoBtn();
+}
+
+function renderTasks() {
+  const scroll = document.getElementById('taskScroll');
+  const pill   = document.getElementById('taskCount');
+
+  const active = tasks.filter(t => t.status === 'active').length;
+  pill.textContent = active;
+
+  if (tasks.length === 0) {
+    scroll.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">✓</div>
+        <p>Nothing on your list.<br>Tell Jarvees what you need to do in the chat →</p>
+      </div>`;
+    return;
+  }
+
+  // Build lookup: parent_id → [subtasks]
+  const childMap = {};
+  tasks.forEach(t => {
+    if (t.parent_id) {
+      if (!childMap[t.parent_id]) childMap[t.parent_id] = [];
+      childMap[t.parent_id].push(t);
+    }
+  });
+
+  // Only top-level tasks drive the numbered list order
+  const topLevel = tasks.filter(t => !t.parent_id);
+
+  // Flat ordered list for number assignment (parents + their children inline)
+  const ordered = [];
+  topLevel.forEach(t => {
+    ordered.push(t);
+    (childMap[t.id] || []).forEach(s => ordered.push(s));
+  });
+
+  const html = topLevel.map(t => {
+    const n       = ordered.indexOf(t) + 1;
+    const done    = t.status === 'completed';
+    const subs    = childMap[t.id] || [];
+    const subsDone = subs.filter(s => s.status === 'completed').length;
+    const allDone  = subs.length > 0 && subsDone === subs.length;
+
+    const progressBadge = subs.length > 0
+      ? `<span class="progress-badge ${allDone ? 'all-done' : ''}">${subsDone}/${subs.length} done</span>`
+      : '';
+
+    const parentCard = `
+      <div class="task-card ${done ? 'done' : ''}" data-id="${t.id}">
+        <span class="task-num">${n}</span>
+        <input type="checkbox" class="task-check" ${done ? 'checked' : ''}
+          onchange="toggleTask(${t.id}, this.checked)" />
+        <div class="task-body">
+          <div class="task-title">${esc(t.title)}</div>
+          <div class="task-meta">
+            ${t.deadline           ? `<span class="badge b-deadline">📅 ${fmtDate(t.deadline)}</span>` : ''}
+            ${t.estimated_duration ? `<span class="badge b-duration">⏱ ${t.estimated_duration}m</span>` : ''}
+            ${t.priority           ? `<span class="badge b-${t.priority}">${t.priority}</span>` : ''}
+            ${t.recurrence         ? `<span class="badge b-recurring">🔄 recurring</span>` : ''}
+            ${progressBadge}
+          </div>
+        </div>
+      </div>`;
+
+    const subCards = subs.map(s => {
+      const sn   = ordered.indexOf(s) + 1;
+      const sdone = s.status === 'completed';
+      return `
+        <div class="task-card subtask ${sdone ? 'done' : ''}" data-id="${s.id}">
+          <span class="task-num">${sn}</span>
+          <input type="checkbox" class="task-check" ${sdone ? 'checked' : ''}
+            onchange="toggleTask(${s.id}, this.checked)" />
+          <div class="task-body">
+            <div class="task-title">${esc(s.title)}</div>
+            ${s.estimated_duration ? `<div class="task-meta"><span class="badge b-duration">⏱ ${s.estimated_duration}m</span></div>` : ''}
+          </div>
+        </div>`;
+    }).join('');
+
+    return `
+      <div class="task-group">
+        ${parentCard}
+        ${subs.length > 0 ? `<div class="subtask-list">${subCards}</div>` : ''}
+      </div>`;
+  }).join('');
+
+  scroll.innerHTML = html;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Task actions (checkbox)
+// ═══════════════════════════════════════════════════════════════════════════════
+async function toggleTask(taskId, checked) {
+  try {
+    const ep = checked
+      ? `/api/tasks/${taskId}/complete`
+      : `/api/tasks/${taskId}/uncomplete`;
+    await api(ep, { method: 'POST' });
+    await loadTasks();
+  } catch (e) {
+    toast('Could not update task — try again.');
+    await loadTasks(); // sync checkbox back
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Undo
+// ═══════════════════════════════════════════════════════════════════════════════
+async function refreshUndoBtn() {
+  const data = await api('/api/undo/available');
+  document.getElementById('undoBtn').disabled = !data.available;
+}
+
+async function doUndo() {
+  try {
+    await api('/api/undo', { method: 'POST' });
+    await loadTasks();
+    addMsg('jarvees', 'Done — last action undone.', 'system');
+    toast('Undone ↩');
+  } catch {
+    addMsg('jarvees', 'Nothing left to undo.', 'system');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Chat
+// ═══════════════════════════════════════════════════════════════════════════════
+async function sendChat() {
+  const input = document.getElementById('chatInput');
+  const msg   = input.value.trim();
+  if (!msg) return;
+
+  input.value = '';
+  input.style.height = '42px';
+  document.getElementById('sendBtn').disabled = true;
+
+  addMsg('user', msg);
+  const typingId = addTyping();
+
+  try {
+    const result = await api('/api/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: msg }),
+    });
+    removeTyping(typingId);
+    addMsg('jarvees', result.message || 'Done.', result.model);
+    handleModelState(result.model);
+    await loadTasks();
+  } catch (e) {
+    removeTyping(typingId);
+    addMsg('jarvees', 'Something went wrong. Check the server is running and try again.', 'error');
+  } finally {
+    document.getElementById('sendBtn').disabled = false;
+    input.focus();
+  }
+}
+
+function addMsg(role, text, model) {
+  const box  = document.getElementById('chatMessages');
+  const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const wrap = document.createElement('div');
+  wrap.className = `msg-wrap ${role}`;
+
+  // Model badge — shown below Jarvees messages only (not user messages)
+  let badgeHtml = '';
+  if (role === 'jarvees' && model) {
+    const labels = { claude: '✦ Claude', gemini: '✦ Gemini', system: 'System', error: '⚠ Error' };
+    const label  = labels[model] || model;
+    badgeHtml = `<span class="model-badge model-${model}">${label}</span>`;
+  }
+
+  wrap.innerHTML = `
+    <div class="msg ${role}">${esc(text)}</div>
+    ${badgeHtml}
+    <span class="msg-time">${time}</span>`;
+  box.appendChild(wrap);
+  box.scrollTop = box.scrollHeight;
+
+  // Persist to localStorage for cross-session history
+  _persistMsg(role, text, model);
+}
+
+function addTyping() {
+  const box = document.getElementById('chatMessages');
+  const id  = 'typ-' + Date.now();
+  const el  = document.createElement('div');
+  el.id = id;
+  el.className = 'typing';
+  el.innerHTML = '<span></span><span></span><span></span>';
+  box.appendChild(el);
+  box.scrollTop = box.scrollHeight;
+  return id;
+}
+
+function removeTyping(id) {
+  const el = document.getElementById(id);
+  if (el) el.remove();
+}
+
+// ─── Model state ──────────────────────────────────────────────────────────────
+// Tracks whether we are currently on Claude or the Gemini fallback.
+// 'claude' = normal; 'gemini' = billing fallback is active.
+let _currentModel = 'claude';
+
+function handleModelState(model) {
+  // Ignore transient labels that don't reflect AI model choice
+  if (!model || model === 'system' || model === 'error') return;
+
+  _currentModel = model;
+  const btn = document.getElementById('refreshClaudeBtn');
+  if (model === 'gemini') {
+    btn.style.display = 'flex';   // show "Switch back to Claude" button
+  } else if (model === 'claude') {
+    btn.style.display = 'none';   // hide it — Claude is already active
+  }
+}
+
+async function refreshClaude() {
+  const btn = document.getElementById('refreshClaudeBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Switching…';
+  try {
+    await api('/api/model/reset', { method: 'POST' });
+    // Flag reset on server. Next message will try Claude.
+    // Optimistically hide the button — if Claude still fails on next
+    // message it will show again via handleModelState().
+    _currentModel = 'claude';
+    btn.style.display = 'none';
+    toast('✦ Claude is queued — your next message will use Claude.');
+    addMsg('jarvees',
+      "I've cleared the Gemini fallback. Your next message will go to Claude — if it's still unavailable I'll let you know.",
+      'system');
+  } catch {
+    toast('Could not reach server. Is it running?');
+    btn.disabled = false;
+    btn.textContent = '✦ Switch back to Claude';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Archive modal
+// ═══════════════════════════════════════════════════════════════════════════════
+async function openArchive() {
+  const archived = await api('/api/tasks/archived');
+  const body     = document.getElementById('archiveBody');
+
+  if (archived.length === 0) {
+    body.innerHTML = `<div class="modal-empty">No archived tasks yet.<br>Completed tasks move here after 7 days.</div>`;
+  } else {
+    body.innerHTML = archived.map(t => `
+      <div class="arc-item" id="arc-${t.id}">
+        <div class="arc-body">
+          <div class="arc-title">${esc(t.title)}</div>
+          <div class="arc-date">Completed ${fmtDate(t.completed_at ? t.completed_at.split('T')[0] : '')}</div>
+        </div>
+        <button class="del-btn" onclick="deleteArchived(${t.id})" title="Delete permanently">🗑</button>
+      </div>`).join('');
+  }
+
+  document.getElementById('archiveOverlay').classList.add('open');
+}
+
+async function deleteArchived(taskId) {
+  await api(`/api/tasks/${taskId}`, { method: 'DELETE' });
+  const el = document.getElementById(`arc-${taskId}`);
+  if (el) {
+    el.style.opacity = '0';
+    el.style.transition = 'opacity .2s';
+    setTimeout(() => {
+      el.remove();
+      const body = document.getElementById('archiveBody');
+      if (!body.querySelector('.arc-item')) {
+        body.innerHTML = `<div class="modal-empty">All cleared.</div>`;
+      }
+    }, 200);
+  }
+  toast('Deleted permanently');
+}
+
+function closeArchive() {
+  document.getElementById('archiveOverlay').classList.remove('open');
+}
+
+function overlayClick(e) {
+  if (e.target === e.currentTarget) closeArchive();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Toast
+// ═══════════════════════════════════════════════════════════════════════════════
+let toastTimer;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Keyboard shortcuts
+// ═══════════════════════════════════════════════════════════════════════════════
+document.getElementById('chatInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendChat();
+  }
+});
+
+// Auto-expand textarea
+document.getElementById('chatInput').addEventListener('input', function () {
+  this.style.height = '42px';
+  this.style.height = Math.min(this.scrollHeight, 110) + 'px';
+});
+
+// ⌘Z / Ctrl+Z → undo (but not when typing in the chat)
+document.addEventListener('keydown', e => {
+  const inInput = ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName);
+  if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !inInput) {
+    e.preventDefault();
+    doUndo();
+  }
+});
+
+// Escape → close archive
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeArchive();
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Utilities
+// ═══════════════════════════════════════════════════════════════════════════════
+function fmtDate(iso) {
+  if (!iso) return '';
+  try {
+    const [y, m, d] = iso.split('-');
+    return new Date(+y, +m - 1, +d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  } catch { return iso; }
+}
+
+function esc(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 15-minute Claude auto-retry
+// If we're on the Gemini fallback, silently reset the flag every 15 minutes
+// so the next user message gets a fresh attempt at Claude.
+// ═══════════════════════════════════════════════════════════════════════════════
+setInterval(async () => {
+  if (_currentModel !== 'gemini') return;   // Claude already active — nothing to do
+
+  try {
+    await api('/api/model/reset', { method: 'POST' });
+    // Flag cleared on server. We won't announce this to the user — the badge on
+    // their next real message will confirm which model actually responded.
+    // If Claude is still broken, chat_handler will fall back to Gemini again
+    // and handleModelState() will re-show the button automatically.
+    console.log('[Jarvees] 15-min auto-retry: Claude flag reset. Next message will try Claude.');
+  } catch {
+    // Server unreachable — silently skip this cycle.
+  }
+}, 15 * 60 * 1000);   // 15 minutes
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Init
+// ═══════════════════════════════════════════════════════════════════════════════
+(async () => {
+  await loadTasks();
+  initHistoryCta();   // show "View previous session" CTA if history exists
+  addMsg('jarvees', "Hey! I'm Jarvees. Tell me what needs to get done and I'll handle the rest. What's on your plate?", 'system');
+})();
+</script>
+</body>
+</html>

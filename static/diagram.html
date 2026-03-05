@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jarvees — System Architecture</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0b0b16;
+      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      padding: 48px 24px 100px;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 56px;
+    }
+    header h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, #a78bfa 0%, #818cf8 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      letter-spacing: -0.3px;
+    }
+    header p {
+      color: #475569;
+      margin-top: 10px;
+      font-size: 0.9rem;
+    }
+
+    .card {
+      max-width: 1400px;
+      margin: 0 auto 52px;
+      background: #13131f;
+      border: 1px solid #1e1b4b;
+      border-radius: 20px;
+      padding: 36px;
+    }
+    .card-header {
+      margin-bottom: 28px;
+    }
+    .card-label {
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #6d28d9;
+      margin-bottom: 6px;
+    }
+    .card h2 {
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: #c4b5fd;
+      margin-bottom: 4px;
+    }
+    .card p {
+      color: #475569;
+      font-size: 0.85rem;
+    }
+
+    .mermaid-wrap {
+      background: #0b0b16;
+      border-radius: 14px;
+      padding: 28px 20px;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>Jarvees — System Architecture</h1>
+    <p>All modules, players, and data flows in one place</p>
+  </header>
+
+  <!-- ── DIAGRAM 1: Module Map ─────────────────────────────────────────── -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-label">Diagram 1 of 2</div>
+      <h2>Module Map</h2>
+      <p>Every component and how they connect — from you, all the way to the database</p>
+    </div>
+    <div class="mermaid-wrap">
+      <div class="mermaid">
+%%{init: {'theme': 'dark', 'themeVariables': {
+  'primaryColor': '#2d1b69',
+  'primaryTextColor': '#ddd6fe',
+  'primaryBorderColor': '#6d28d9',
+  'lineColor': '#818cf8',
+  'secondaryColor': '#1e1b4b',
+  'tertiaryColor': '#13131f',
+  'clusterBkg': '#0d0d1a',
+  'clusterBorder': '#3730a3',
+  'titleColor': '#a78bfa',
+  'edgeLabelBackground': '#1e1b4b',
+  'fontFamily': 'ui-sans-serif, system-ui, sans-serif'
+}}}%%
+flowchart LR
+    YOU(["👤 You"])
+
+    subgraph BROWSER["BROWSER  ·  static/index.html"]
+        direction TB
+        CHATUI["💬 Chat Panel\n── type plain-English messages\n── Jarvees replies with model badge\n── chat history saved in localStorage\n── Switch-to-Claude button appears\n   when on Gemini fallback\n── 15-min auto-retry setInterval"]
+        TASKUI["✅ Task Panel\n── numbered active task list\n── checkboxes + strikethrough\n── subtask groups with X/N done badge\n── undo button + ⌘Z shortcut\n── archive modal (7-day auto-archive)"]
+    end
+
+    subgraph BACKEND["FASTAPI BACKEND  ·  main.py  ·  uvicorn :8000"]
+        direction TB
+        ROUTES["HTTP Routes\n──────────────────────────\nGET    /                   → index.html\nGET    /api/tasks          → active list\nGET    /api/tasks/archived → archived list\nPOST   /api/tasks/:id/complete\nPOST   /api/tasks/:id/uncomplete\nDELETE /api/tasks/:id\nPOST   /api/undo\nGET    /api/undo/available\nPOST   /api/chat           → main AI route\nPOST   /api/model/reset    → clear flag"]
+        UNDORX["🔍 Undo Regex Interceptor\nphrases: 'undo' · 'undo that'\n'undo last action' · 'revert that'\nzero AI cost — direct to DB"]
+    end
+
+    subgraph AIROUTER["AI ROUTER  ·  chat_handler.py"]
+        direction TB
+        FLAG["⚑ Session Flag\n_claude_billing_failed\n────────────────────────\nFalse on every server start\nflips True on first billing error\nreset by /api/model/reset\nor 15-min UI timer"]
+        C1["① Try Claude First\nclaude-sonnet-4-6\nmax_tokens: 1500"]
+        C2["② Gemini Fallback\ngemini-2.0-flash\nfree tier"]
+    end
+
+    subgraph EXTAPIS["EXTERNAL  AI  APIS"]
+        direction TB
+        ANTHR["☁️ Anthropic API\nclaude-sonnet-4-6\n(paid, best quality)"]
+        GOOGL["☁️ Google GenAI API\ngemini-2.0-flash\n(free tier, 1500 RPD limit)"]
+    end
+
+    subgraph DBLAYER["DATABASE LAYER  ·  database.py"]
+        DBOPS["SQLite Operations\n──────────────────────────\nadd_task(task, parent_id?)\ncomplete_task(id)   ── cascades to subtasks\n                    ── auto-completes parent\n                       when all siblings done\nuncomplete_task(id)\ndelete_task(id)     ── cascades subtasks\nundo_last()         ── snapshot restore\nget_active_tasks()  ── triggers _auto_archive\n_auto_archive()     ── completed >7d → archived\nhas_undo()"]
+    end
+
+    SQLITE[("🗄️  tasks.db\n────────────────\ntasks\n  id · title · deadline\n  estimated_duration\n  priority · task_type\n  recurrence · status\n  parent_id · created_at\n  completed_at\n  missed_count\n  escalation_level\n  calendar_event_id\n────────────────\nundo_log\n  last 20 actions\n  before/after snapshots")]
+
+    ENV["🔑  .env\n──────────────────\nANTHROPIC_API_KEY\nGEMINI_API_KEY\nGOOGLE_CALENDAR_\nCREDENTIALS_FILE\n(never committed)"]
+
+    YOU -->|"types & clicks"| BROWSER
+    BROWSER -->|"HTTP fetch() calls"| BACKEND
+    BACKEND -->|"POST /api/chat\nprocess_chat(msg, tasks)"| AIROUTER
+    AIROUTER <-->|"HTTPS"| EXTAPIS
+    BACKEND <-->|"all CRUD operations"| DBLAYER
+    DBLAYER --- SQLITE
+    ENV -.->|"loaded by python-dotenv\nat server startup"| AIROUTER
+      </div>
+    </div>
+  </div>
+
+  <!-- ── DIAGRAM 2: Chat Message Flow ─────────────────────────────────── -->
+  <div class="card">
+    <div class="card-header">
+      <div class="card-label">Diagram 2 of 2</div>
+      <h2>Chat Message Flow</h2>
+      <p>Step-by-step: what happens from the moment you press Send to the moment the UI updates</p>
+    </div>
+    <div class="mermaid-wrap">
+      <div class="mermaid">
+%%{init: {'theme': 'dark', 'themeVariables': {
+  'primaryColor': '#2d1b69',
+  'primaryTextColor': '#ddd6fe',
+  'primaryBorderColor': '#6d28d9',
+  'lineColor': '#818cf8',
+  'secondaryColor': '#1e1b4b',
+  'tertiaryColor': '#13131f',
+  'clusterBkg': '#0d0d1a',
+  'clusterBorder': '#3730a3',
+  'titleColor': '#a78bfa',
+  'edgeLabelBackground': '#1e1b4b',
+  'fontFamily': 'ui-sans-serif, system-ui, sans-serif'
+}}}%%
+flowchart TD
+    START(["👤 You press Send"])
+    POST["POST /api/chat   ·   main.py"]
+    UNDO_CHK{"undo phrase?\nregex match"}
+
+    DB_UNDO1["db.undo_last()\nrestore snapshot from undo_log"]
+    SYS_REPLY(["↩  'Done — last action undone.'\nmodel: system  ·  zero AI cost"])
+
+    GET_TASKS["db.get_active_tasks()\nbuild numbered list for AI context\nalso triggers _auto_archive()"]
+    PROCESS["chat_handler.process_chat(message, tasks)"]
+
+    FLAG_CHK{"_claude_billing\n_failed?"}
+
+    TRY_CLAUDE["Call Anthropic API\nclaude-sonnet-4-6\n────────────────────\nsystem: SYSTEM_PROMPT + today's date\nuser:   message + numbered task list"]
+    CLAUDE_OK{"call\nsucceeded?"}
+    BILLING_CHK{"billing error?\n'credit balance'\n'insufficient'"}
+    SET_FLAG["flag = True\nlog: billing limit hit"]
+
+    TRY_GEMINI["Call Google GenAI API\ngemini-2.0-flash\n────────────────────\nsame system_instruction\nsame user content"]
+    GEMINI_OK{"call\nsucceeded?"}
+    QUOTA_ERR(["⚠️  'Gemini rate limit reached.\nPlease wait and try again.'\nmodel: error"])
+    NET_ERR(["❌ 'Something went wrong'\nmodel: error"])
+
+    PARSE_JSON["Parse JSON response\nstrip markdown fences if present"]
+
+    ACT_SW{"action?"}
+
+    A1["add_task\ndb.add_task(task)"]
+    A2["add_multiple_tasks\ndb.add_task() × N\nfor each unrelated task"]
+    A3["add_task_with_subtasks\ndb.add_task(parent)\n+ db.add_task(child, parent_id) × N"]
+    A4["complete_task\ndb.complete_task(id)\n── cascades to all subtasks\n── auto-completes parent task\n   when all siblings are done"]
+    A5["uncomplete_task\ndb.uncomplete_task(id)\nrestores status to active"]
+    A6["delete_task\ndb.delete_task(id)\n── cascades to all subtasks"]
+    A7["undo\ndb.undo_last()\nsnapshot restore"]
+    A8["chat\nmessage only\nno DB write"]
+
+    SQLITE[("tasks.db")]
+
+    RESPOND["return JSON\n{ action, message, model, task? }"]
+    UI_UPDATE(["✓  Browser updates\n── reply added with model badge\n── task list refreshed\n── message saved to localStorage"])
+
+    START --> POST --> UNDO_CHK
+
+    UNDO_CHK -->|"yes  —  free"| DB_UNDO1 --> SYS_REPLY
+    UNDO_CHK -->|"no"| GET_TASKS --> PROCESS --> FLAG_CHK
+
+    FLAG_CHK -->|"False"| TRY_CLAUDE --> CLAUDE_OK
+    CLAUDE_OK -->|"✅ success"| PARSE_JSON
+    CLAUDE_OK -->|"error"| BILLING_CHK
+    BILLING_CHK -->|"yes 💳"| SET_FLAG --> TRY_GEMINI
+    BILLING_CHK -->|"no"| NET_ERR
+
+    FLAG_CHK -->|"True"| TRY_GEMINI --> GEMINI_OK
+    GEMINI_OK -->|"✅ success"| PARSE_JSON
+    GEMINI_OK -->|"quota / 429 ⚠️"| QUOTA_ERR
+
+    PARSE_JSON --> ACT_SW
+
+    ACT_SW -->|"add_task"| A1
+    ACT_SW -->|"add_multiple"| A2
+    ACT_SW -->|"with_subtasks"| A3
+    ACT_SW -->|"complete"| A4
+    ACT_SW -->|"uncomplete"| A5
+    ACT_SW -->|"delete"| A6
+    ACT_SW -->|"undo"| A7
+    ACT_SW -->|"chat"| A8
+
+    A1 & A2 & A3 & A4 & A5 & A6 & A7 --> SQLITE --> RESPOND
+    A8 --> RESPOND
+    RESPOND --> UI_UPDATE
+      </div>
+    </div>
+  </div>
+
+  <script>
+    mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' });
+  </script>
+
+</body>
+</html>

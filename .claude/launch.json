@@ -1,0 +1,15 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Jarvees Backend",
+      "runtimeExecutable": "/usr/bin/python3",
+      "runtimeArgs": [
+        "-S",
+        "-c",
+        "import sys; sys.path = [p for p in sys.path if p != '']; sys.path.insert(0, '/Users/utsavbansal/Documents/Claude/AI Agent Jarvees/venv/lib/python3.9/site-packages'); sys.path.insert(0, '/Users/utsavbansal/Documents/Claude/AI Agent Jarvees'); import uvicorn; uvicorn.run('main:app', host='127.0.0.1', port=8000)"
+      ],
+      "port": 8000
+    }
+  ]
+}

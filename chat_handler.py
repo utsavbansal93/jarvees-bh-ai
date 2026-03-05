@@ -2,11 +2,16 @@
 Jarvees — Chat Command Handler
 
 Routing logic:
-  1. Claude (Anthropic) is tried first — best quality.
-  2. If Claude returns a billing/balance error, we flip _claude_billing_failed=True
-     and fall back to Gemini 2.0 Flash (free tier) for the rest of the session.
-  3. On server restart the flag resets, so if you top up Claude credits it picks
-     back up automatically without any code change.
+  1. Claude (claude-sonnet-4-6) is tried first — best quality.
+  2. If Claude returns a billing/balance error, flip _claude_billing_failed=True
+     and work through the Gemini cascade in order:
+       a. gemini-3-flash-preview  (newest — best quality)
+       b. gemini-2.5-flash        (balanced speed + intelligence)
+       c. gemini-2.5-flash-lite   (most generous free-tier limits)
+  3. Each Gemini model that hits a quota/rate-limit is added to
+     _failed_gemini_models and the next model in the cascade is tried.
+  4. reset_claude_flag() clears both state vars — called by /api/model/reset
+     (manual "Switch back to Claude" button or the 15-min auto-retry timer).
 
 Undo commands are intercepted in main.py BEFORE reaching this module — zero AI cost.
 """
@@ -27,7 +32,19 @@ load_dotenv(override=False)
 # ── State ─────────────────────────────────────────────────────────────────────
 
 _anthropic_client: anthropic.Anthropic | None = None
-_claude_billing_failed: bool = False   # flips True on first billing error; resets on restart
+_claude_billing_failed: bool = False    # flips True on first billing error
+_failed_gemini_models: set = set()      # models that hit quota this session
+
+# ── Gemini model cascade ──────────────────────────────────────────────────────
+# Tried in order when Claude is unavailable. First model to succeed wins.
+# Models that hit their free-tier quota are skipped for the rest of the session.
+# All flags reset on server restart or when /api/model/reset is called.
+
+GEMINI_CASCADE = [
+    "gemini-3-flash-preview",   # newest — best quality, may have preview instability
+    "gemini-2.5-flash",         # balanced speed and intelligence
+    "gemini-2.5-flash-lite",    # most generous free-tier limits
+]
 
 
 # ── Clients ───────────────────────────────────────────────────────────────────
@@ -39,11 +56,11 @@ def _anthropic() -> anthropic.Anthropic:
     return _anthropic_client
 
 
-def _gemini_response(full_prompt: str) -> str:
-    """Call Gemini 3.0 Flash preview (new google.genai SDK) and return raw text."""
+def _gemini_response(full_prompt: str, model: str) -> str:
+    """Call a Gemini model (google.genai SDK) and return raw text."""
     client = genai.Client(api_key=os.getenv("GEMINI_API_KEY", ""))
     response = client.models.generate_content(
-        model="gemini-3-flash-preview",
+        model=model,
         contents=full_prompt,
         config=types.GenerateContentConfig(
             system_instruction=SYSTEM_PROMPT.format(today=date.today().isoformat()),
@@ -116,11 +133,13 @@ def _is_gemini_quota_error(e: Exception) -> bool:
 
 def reset_claude_flag() -> None:
     """
-    Reset the billing flag so the next chat attempt uses Claude again.
+    Reset all AI failure flags so the next request tries Claude again.
+    Also clears the Gemini quota-hit set so the full cascade is available.
     Called by the /api/model/reset endpoint (manual button or 15-min auto-retry).
     """
-    global _claude_billing_failed
+    global _claude_billing_failed, _failed_gemini_models
     _claude_billing_failed = False
+    _failed_gemini_models = set()
 
 
 def process_chat(user_message: str, current_tasks: list[dict]) -> tuple[dict, str]:
@@ -128,7 +147,7 @@ def process_chat(user_message: str, current_tasks: list[dict]) -> tuple[dict, st
     Parse a natural-language command and return (action_dict, model_used).
     model_used is one of: "claude" | "gemini"
     """
-    global _claude_billing_failed
+    global _claude_billing_failed, _failed_gemini_models
 
     # Build task context
     if current_tasks:
@@ -156,20 +175,30 @@ def process_chat(user_message: str, current_tasks: list[dict]) -> tuple[dict, st
 
         except Exception as e:
             if _is_billing_error(e):
-                # Flip the flag — skip Claude for the rest of this session
                 _claude_billing_failed = True
-                print("[Jarvees] Claude billing limit hit — switching to Gemini for this session.")
+                print("[Jarvees] Claude billing limit hit — starting Gemini cascade.")
             else:
                 # Non-billing error (network, etc.) — surface it, don't fall back silently
                 raise
 
-    # ── Gemini fallback ───────────────────────────────────────────────────────
-    try:
-        raw = _gemini_response(full_user_content)
-        return _parse_json(raw), "gemini"
-    except Exception as e:
-        if _is_gemini_quota_error(e):
-            raise Exception(
-                "Gemini free-tier rate limit reached. Please wait a few seconds and try again."
-            )
-        raise
+    # ── Gemini cascade ────────────────────────────────────────────────────────
+    for model in GEMINI_CASCADE:
+        if model in _failed_gemini_models:
+            continue  # already hit quota this session — skip
+
+        try:
+            raw = _gemini_response(full_user_content, model)
+            return _parse_json(raw), "gemini"
+
+        except Exception as e:
+            if _is_gemini_quota_error(e):
+                _failed_gemini_models.add(model)
+                print(f"[Jarvees] {model} quota hit — trying next model in cascade.")
+                continue
+            raise  # non-quota error — surface it
+
+    # All models exhausted
+    raise Exception(
+        "All AI models are currently unavailable — Claude billing limit reached "
+        "and all Gemini free-tier quotas exhausted. Please wait or top up credits."
+    )

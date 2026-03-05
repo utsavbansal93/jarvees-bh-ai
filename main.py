@@ -91,6 +91,14 @@ def model_reset():
     return {"ok": True, "model": "claude"}
 
 
+# ── Chat history ──────────────────────────────────────────────────────────────
+
+@app.get("/api/chat/history")
+def get_chat_history():
+    """Return the last 100 messages for display on page load."""
+    return db.get_chat_history()
+
+
 # ── Chat ──────────────────────────────────────────────────────────────────────
 
 class ChatRequest(BaseModel):
@@ -108,6 +116,7 @@ def chat(body: ChatRequest):
 
     # ── Zero-cost undo shortcut ───────────────────────────────────────────────
     # Intercept obvious undo phrases before they hit any AI model.
+    # Undo commands are intentionally NOT saved to chat_log (ephemeral UI action).
     if _UNDO_RE.match(body.message):
         action_type, _ = db.undo_last()
         if action_type is None:
@@ -115,14 +124,19 @@ def chat(body: ChatRequest):
         return {"action": "undo", "message": "Done — last action undone.", "model": "system"}
 
     # ── AI-powered commands ───────────────────────────────────────────────────
+    # Persist the user's message before calling the AI.
+    db.save_chat_message("user", body.message)
+
     tasks = db.get_active_tasks()
 
     try:
         action, model_used = chat_handler.process_chat(body.message, tasks)
     except Exception as e:
+        err_msg = f"Something went wrong on my end: {e}"
+        db.save_chat_message("jarvees", err_msg, "error")
         return {
             "action": "chat",
-            "message": f"Something went wrong on my end: {e}",
+            "message": err_msg,
             "model": "error",
         }
 
@@ -170,6 +184,9 @@ def chat(body: ChatRequest):
         action_type, _ = db.undo_last()
         if action_type is None:
             result["message"] = "Nothing to undo."
+
+    # Persist Jarvees' reply to the chat log
+    db.save_chat_message("jarvees", result["message"], model_used)
 
     return result
 

@@ -461,69 +461,18 @@
       color: var(--muted); font-size: 13.5px;
     }
 
-    /* ── Chat history CTA ───────────────────────────────────────────────── */
-    #historyCta { flex-shrink: 0; padding: 10px 18px 0; }
-
-    .history-cta-btn {
-      width: 100%;
-      padding: 8px 14px;
-      border-radius: 8px;
-      border: 1px dashed var(--border);
-      background: var(--bg);
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 500;
-      cursor: pointer;
-      font-family: inherit;
-      transition: all .15s;
-      text-align: left;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .history-cta-btn:hover, .history-cta-btn.open {
-      border-color: var(--brand);
-      color: var(--brand);
-      background: var(--brand-light);
-    }
-
-    .history-panel {
-      display: none;
-      flex-direction: column;
-      gap: 8px;
-      padding: 6px 0;
-      max-height: 300px;
-      overflow-y: auto;
-      border-bottom: 1px solid var(--border);
-      margin: 6px 0 0;
-    }
-    .history-panel.open { display: flex; }
-
+    /* ── Chat history (server-side) ─────────────────────────────────────── */
     .history-divider {
       text-align: center;
       font-size: 11px;
       color: var(--muted);
-      padding: 2px 0 6px;
+      padding: 4px 0 8px;
+      border-top: 1px solid var(--border);
+      margin-top: 4px;
     }
+    .history-divider:first-child { border-top: none; }
 
-    .history-msgs { display: flex; flex-direction: column; gap: 8px; }
-
-    .msg.history-msg { opacity: 0.7; }
-
-    .history-pagination {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 10px;
-      padding: 6px 0 2px;
-      font-size: 12px;
-      color: var(--muted);
-      flex-shrink: 0;
-    }
-    .history-pagination .btn {
-      padding: 3px 10px;
-      font-size: 11px;
-    }
+    .msg.history-msg { opacity: 0.65; }
 
     /* ── Model badge ─────────────────────────────────────────────────────── */
     .model-badge {
@@ -591,7 +540,6 @@
       <div class="online-dot"></div>
       Jarvees
     </div>
-    <div id="historyCta"></div>
     <div class="chat-messages" id="chatMessages"></div>
     <div class="chat-input-row">
       <textarea id="chatInput" placeholder="Add a task, mark one done, ask anything…"></textarea>
@@ -622,137 +570,59 @@
 let tasks = [];
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Chat history (localStorage)
-// ─ Keeps messages from at most MAX_SESSIONS prior sessions, capped at MAX_MSGS.
-// ─ Each page load = a new session (identified by its start timestamp).
+// Chat history (server-side — persisted in SQLite via /api/chat/history)
+// ─ Loaded once on page init from GET /api/chat/history.
+// ─ Saved automatically by POST /api/chat for every AI-processed exchange.
+// ─ Persists across browser sessions, server restarts, and preview reloads.
 // ═══════════════════════════════════════════════════════════════════════════════
-const HISTORY_KEY  = 'jarvees_history';
-const MAX_MSGS     = 40;
-const MAX_SESSIONS = 2;   // how many *previous* sessions to retain
-const PAGE_SIZE    = 10;
 
-// Unique ID for this page-load session
-const _sessionId = Date.now().toString();
-let _historyOpen = false;
-let _historyPage = 0;
+async function loadChatHistory() {
+  try {
+    const history = await api('/api/chat/history');
+    if (!history.length) return;
 
-function _loadHistory() {
-  try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); }
-  catch { return []; }
-}
+    const box    = document.getElementById('chatMessages');
+    const n      = history.length;
+    const LABELS = { claude: '✦ Claude', gemini: '✦ Gemini', system: 'System', error: '⚠ Error' };
+    const VALID_MODELS = new Set(['claude', 'gemini', 'system', 'error']);
 
-function _saveHistory(msgs) {
-  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(msgs)); }
-  catch { /* ignore quota errors */ }
-}
+    // Top divider
+    const top = document.createElement('div');
+    top.className = 'history-divider';
+    top.textContent = `— ${n} message${n !== 1 ? 's' : ''} from previous sessions —`;
+    box.appendChild(top);
 
-/** Keep only the last MAX_SESSIONS+1 sessions (including current) and MAX_MSGS total. */
-function _pruneHistory(msgs) {
-  const allSessions  = [...new Set(msgs.map(m => m.sessionId))];
-  // +1 because current session counts too; we keep MAX_SESSIONS *previous* ones
-  const keepSessions = allSessions.slice(-(MAX_SESSIONS + 1));
-  let pruned = msgs.filter(m => keepSessions.includes(m.sessionId));
-  if (pruned.length > MAX_MSGS) pruned = pruned.slice(pruned.length - MAX_MSGS);
-  return pruned;
-}
+    // Render each saved message
+    history.forEach(h => {
+      const wrap = document.createElement('div');
+      wrap.className = `msg-wrap ${h.role}`;
 
-/** Save one message to history. Called by addMsg for every real message. */
-function _persistMsg(role, text, model) {
-  const history = _loadHistory();
-  history.push({
-    role, text, model,
-    time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    sessionId: _sessionId,
-  });
-  _saveHistory(_pruneHistory(history));
-}
+      // Convert SQLite UTC timestamp ("YYYY-MM-DD HH:MM:SS") to local time
+      const time = h.timestamp
+        ? new Date(h.timestamp.replace(' ', 'T') + 'Z')
+            .toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+        : '';
 
-/** Return messages from the most recent *previous* session (not the current one). */
-function _getPrevSessionMsgs() {
-  const all  = _loadHistory().filter(m => m.sessionId !== _sessionId);
-  if (!all.length) return [];
-  const sessions = [...new Set(all.map(m => m.sessionId))];
-  const lastPrev = sessions[sessions.length - 1];
-  return all.filter(m => m.sessionId === lastPrev);
-}
+      const badgeHtml = (h.role === 'jarvees' && h.model)
+        ? `<span class="model-badge model-${VALID_MODELS.has(h.model) ? h.model : 'system'}">${LABELS[h.model] || h.model}</span>`
+        : '';
 
-// ── History CTA rendering ─────────────────────────────────────────────────────
+      wrap.innerHTML = `
+        <div class="msg ${h.role} history-msg">${esc(h.text)}</div>
+        ${badgeHtml}
+        <span class="msg-time">${time}</span>`;
+      box.appendChild(wrap);
+    });
 
-function initHistoryCta() {
-  const prev = _getPrevSessionMsgs();
-  if (!prev.length) return;
+    // Bottom divider separating history from the new session
+    const bot = document.createElement('div');
+    bot.className = 'history-divider';
+    bot.textContent = '— New session —';
+    box.appendChild(bot);
 
-  const cta = document.getElementById('historyCta');
-  const n   = prev.length;
-  cta.innerHTML = `
-    <button class="history-cta-btn" id="historyCtaBtn" onclick="toggleHistory()">
-      📜 <span>${n} message${n !== 1 ? 's' : ''} from previous session</span>
-      <span id="historyChevron" style="margin-left:auto">▾</span>
-    </button>
-    <div class="history-panel" id="historyPanel"></div>`;
-}
-
-function toggleHistory() {
-  const panel   = document.getElementById('historyPanel');
-  const btn     = document.getElementById('historyCtaBtn');
-  const chevron = document.getElementById('historyChevron');
-  _historyOpen  = !_historyOpen;
-
-  if (_historyOpen) {
-    _historyPage = 0;
-    renderHistoryPage();
-    panel.classList.add('open');
-    btn.classList.add('open');
-    chevron.textContent = '▴';
-  } else {
-    panel.classList.remove('open');
-    btn.classList.remove('open');
-    chevron.textContent = '▾';
-  }
-}
-
-function renderHistoryPage() {
-  const prev       = _getPrevSessionMsgs();
-  const total      = prev.length;
-  const start      = _historyPage * PAGE_SIZE;
-  const end        = Math.min(start + PAGE_SIZE, total);
-  const page       = prev.slice(start, end);
-  const totalPages = Math.ceil(total / PAGE_SIZE);
-
-  const MODEL_LABELS = { claude: '✦ Claude', gemini: '✦ Gemini', system: 'System', error: '⚠ Error' };
-
-  const msgsHtml = page.map(m => {
-    const badge = (m.role === 'jarvees' && m.model)
-      ? `<span class="model-badge model-${m.model}">${MODEL_LABELS[m.model] || m.model}</span>`
-      : '';
-    return `
-      <div class="msg-wrap ${m.role}">
-        <div class="msg ${m.role} history-msg">${esc(m.text)}</div>
-        ${badge}
-        <span class="msg-time">${m.time}</span>
-      </div>`;
-  }).join('');
-
-  const pager = totalPages > 1 ? `
-    <div class="history-pagination">
-      <button class="btn" onclick="historyPrev()" ${_historyPage === 0 ? 'disabled' : ''}>← Prev</button>
-      <span>${_historyPage + 1} / ${totalPages}</span>
-      <button class="btn" onclick="historyNext()" ${_historyPage >= totalPages - 1 ? 'disabled' : ''}>Next →</button>
-    </div>` : '';
-
-  document.getElementById('historyPanel').innerHTML = `
-    <div class="history-divider">— Previous session —</div>
-    <div class="history-msgs" style="padding:0 18px">${msgsHtml}</div>
-    ${pager}`;
-}
-
-function historyPrev() {
-  if (_historyPage > 0) { _historyPage--; renderHistoryPage(); }
-}
-function historyNext() {
-  if ((_historyPage + 1) * PAGE_SIZE < _getPrevSessionMsgs().length) {
-    _historyPage++;
-    renderHistoryPage();
+    box.scrollTop = box.scrollHeight;
+  } catch {
+    // Server unreachable or empty history — silently continue
   }
 }
 
@@ -956,9 +826,6 @@ function addMsg(role, text, model) {
     <span class="msg-time">${time}</span>`;
   box.appendChild(wrap);
   box.scrollTop = box.scrollHeight;
-
-  // Persist to localStorage for cross-session history
-  _persistMsg(role, text, model);
 }
 
 function addTyping() {
@@ -1152,7 +1019,7 @@ setInterval(async () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 (async () => {
   await loadTasks();
-  initHistoryCta();   // show "View previous session" CTA if history exists
+  await loadChatHistory();   // fetch and render previous messages from SQLite
   addMsg('jarvees', "Hey! I'm Jarvees. Tell me what needs to get done and I'll handle the rest. What's on your plate?", 'system');
 })();
 </script>

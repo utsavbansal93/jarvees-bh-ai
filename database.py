@@ -21,6 +21,15 @@ def _conn():
 def init_db():
     with _conn() as c:
         c.execute("""
+            CREATE TABLE IF NOT EXISTS chat_log (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                role      TEXT NOT NULL,
+                text      TEXT NOT NULL,
+                model     TEXT,
+                timestamp TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        c.execute("""
             CREATE TABLE IF NOT EXISTS tasks (
                 id                INTEGER PRIMARY KEY AUTOINCREMENT,
                 title             TEXT    NOT NULL,
@@ -191,6 +200,27 @@ def delete_task(task_id: int) -> bool:
         c.execute("DELETE FROM tasks WHERE parent_id=?", (task_id,))
         c.execute("DELETE FROM tasks WHERE id=?", (task_id,))
     return True
+
+
+# ── Chat log ──────────────────────────────────────────────────────────────────
+
+def save_chat_message(role: str, text: str, model: str | None = None) -> None:
+    """Persist a single chat message (user or jarvees) to the chat_log table."""
+    with _conn() as c:
+        c.execute(
+            "INSERT INTO chat_log (role, text, model) VALUES (?, ?, ?)",
+            (role, text, model)
+        )
+
+
+def get_chat_history(limit: int = 100) -> list[dict]:
+    """Return the last `limit` messages in chronological order."""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT role, text, model, timestamp FROM chat_log ORDER BY id DESC LIMIT ?",
+            (limit,)
+        ).fetchall()
+    return [dict(r) for r in reversed(rows)]
 
 
 def undo_last() -> tuple[str, dict] | tuple[None, None]:

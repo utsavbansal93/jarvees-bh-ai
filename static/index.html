@@ -207,22 +207,50 @@
     .task-group { display: flex; flex-direction: column; gap: 4px; }
 
     .subtask-list {
-      margin-left: 28px;
+      list-style: none;
+      margin: 2px 0 0 36px;
+      padding: 0 0 0 12px;
+      border-left: 2px solid var(--brand-light);
       display: flex;
       flex-direction: column;
-      gap: 4px;
-      padding-left: 12px;
-      border-left: 2px solid var(--brand-light);
+      gap: 0;
     }
 
-    .task-card.subtask {
-      background: #fafbff;
-      border-color: #e8ebf8;
-      box-shadow: none;
-      padding: 8px 14px;
+    .subtask-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 8px;
+      border-radius: 6px;
+      transition: background .12s;
     }
-    .task-card.subtask .task-title { font-size: 13px; font-weight: 400; }
-    .task-card.subtask .task-num   { font-size: 10px; }
+    .subtask-item:hover { background: var(--bg); }
+
+    .subtask-check {
+      width: 14px;
+      height: 14px;
+      flex-shrink: 0;
+      cursor: pointer;
+      accent-color: var(--brand);
+    }
+
+    .subtask-title {
+      font-size: 13px;
+      color: var(--text);
+      line-height: 1.4;
+      flex: 1;
+    }
+    .subtask-item.subtask-done .subtask-title {
+      text-decoration: line-through;
+      color: var(--done-color);
+    }
+
+    .sub-dur {
+      font-size: 11px;
+      color: var(--muted);
+      margin-left: 5px;
+      font-weight: 400;
+    }
 
     .progress-badge {
       font-size: 11px;
@@ -486,6 +514,47 @@
     .model-claude  { background: #ede9fe; color: #6d28d9; }
     .model-gemini  { background: #fef9c3; color: #854d0e; }
     .model-system  { background: #f1f5f9; color: #64748b; }
+    .model-error   { background: #fef2f2; color: #b91c1c; }
+
+    /* ── Priority dropdown ───────────────────────────────────────────────── */
+    .priority-badge { cursor: pointer; user-select: none; }
+    .priority-badge:hover { opacity: 0.75; }
+
+    .priority-menu {
+      position: fixed;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: var(--shadow-md);
+      z-index: 300;
+      overflow: hidden;
+      min-width: 88px;
+    }
+    .priority-menu button {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      width: 100%;
+      padding: 7px 13px;
+      border: none;
+      background: none;
+      font-size: 12.5px;
+      font-weight: 500;
+      cursor: pointer;
+      font-family: inherit;
+      color: var(--text);
+      text-align: left;
+    }
+    .priority-menu button:hover { background: var(--bg); }
+    .priority-menu button.p-active { font-weight: 700; }
+    .priority-menu .p-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .p-dot-high   { background: var(--high); }
+    .p-dot-medium { background: #f59e0b; }
+    .p-dot-low    { background: var(--low); }
 
     /* ── Toast ───────────────────────────────────────────────────────────── */
     #toast {
@@ -583,9 +652,6 @@ async function loadChatHistory() {
 
     const box    = document.getElementById('chatMessages');
     const n      = history.length;
-    const LABELS = { claude: '✦ Claude', gemini: '✦ Gemini', system: 'System', error: '⚠ Error' };
-    const VALID_MODELS = new Set(['claude', 'gemini', 'system', 'error']);
-
     // Top divider
     const top = document.createElement('div');
     top.className = 'history-divider';
@@ -604,7 +670,7 @@ async function loadChatHistory() {
         : '';
 
       const badgeHtml = (h.role === 'jarvees' && h.model)
-        ? `<span class="model-badge model-${VALID_MODELS.has(h.model) ? h.model : 'system'}">${LABELS[h.model] || h.model}</span>`
+        ? `<span class="model-badge model-${modelCssClass(h.model)}">${MODEL_LABELS[h.model] || h.model}</span>`
         : '';
 
       wrap.innerHTML = `
@@ -706,32 +772,28 @@ function renderTasks() {
           <div class="task-meta">
             ${t.deadline           ? `<span class="badge b-deadline">📅 ${fmtDate(t.deadline)}</span>` : ''}
             ${t.estimated_duration ? `<span class="badge b-duration">⏱ ${t.estimated_duration}m</span>` : ''}
-            ${t.priority           ? `<span class="badge b-${t.priority}">${t.priority}</span>` : ''}
+            ${t.priority           ? `<span class="badge b-${t.priority} priority-badge" onclick="openPriorityMenu(event,${t.id},'${t.priority}')">${t.priority}</span>` : ''}
             ${t.recurrence         ? `<span class="badge b-recurring">🔄 recurring</span>` : ''}
             ${progressBadge}
           </div>
         </div>
       </div>`;
 
-    const subCards = subs.map(s => {
-      const sn   = ordered.indexOf(s) + 1;
+    const subItems = subs.map(s => {
       const sdone = s.status === 'completed';
+      const dur   = s.estimated_duration ? `<span class="sub-dur">⏱ ${s.estimated_duration}m</span>` : '';
       return `
-        <div class="task-card subtask ${sdone ? 'done' : ''}" data-id="${s.id}">
-          <span class="task-num">${sn}</span>
-          <input type="checkbox" class="task-check" ${sdone ? 'checked' : ''}
+        <li class="subtask-item ${sdone ? 'subtask-done' : ''}" data-id="${s.id}">
+          <input type="checkbox" class="subtask-check" ${sdone ? 'checked' : ''}
             onchange="toggleTask(${s.id}, this.checked)" />
-          <div class="task-body">
-            <div class="task-title">${esc(s.title)}</div>
-            ${s.estimated_duration ? `<div class="task-meta"><span class="badge b-duration">⏱ ${s.estimated_duration}m</span></div>` : ''}
-          </div>
-        </div>`;
+          <span class="subtask-title">${esc(s.title)}${dur}</span>
+        </li>`;
     }).join('');
 
     return `
       <div class="task-group">
         ${parentCard}
-        ${subs.length > 0 ? `<div class="subtask-list">${subCards}</div>` : ''}
+        ${subs.length > 0 ? `<ul class="subtask-list">${subItems}</ul>` : ''}
       </div>`;
   }).join('');
 
@@ -771,6 +833,29 @@ async function doUndo() {
   } catch {
     addMsg('jarvees', 'Nothing left to undo.', 'system');
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Model helpers
+// Maps any AI model ID → display label and CSS class.
+// All Gemini variants (whatever comes back from the cascade) share the
+// 'model-gemini' CSS class so they all get the same yellow styling.
+// ═══════════════════════════════════════════════════════════════════════════════
+const MODEL_LABELS = {
+  claude:                   '✦ Claude',
+  'gemini-3-flash-preview': '✦ Gemini 3',
+  'gemini-2.5-flash':       '✦ Gemini 2.5',
+  'gemini-2.5-flash-lite':  '✦ Gemini 2.5 Lite',
+  system:                   'System',
+  error:                    '⚠ Error',
+};
+
+function modelCssClass(model) {
+  if (!model) return 'system';
+  // Named CSS classes only exist for these four — everything else (any Gemini
+  // variant not yet in MODEL_LABELS) falls back to 'gemini'.
+  if (model === 'claude' || model === 'system' || model === 'error') return model;
+  return 'gemini';
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -815,9 +900,8 @@ function addMsg(role, text, model) {
   // Model badge — shown below Jarvees messages only (not user messages)
   let badgeHtml = '';
   if (role === 'jarvees' && model) {
-    const labels = { claude: '✦ Claude', gemini: '✦ Gemini', system: 'System', error: '⚠ Error' };
-    const label  = labels[model] || model;
-    badgeHtml = `<span class="model-badge model-${model}">${label}</span>`;
+    const label = MODEL_LABELS[model] || model;
+    badgeHtml = `<span class="model-badge model-${modelCssClass(model)}">${label}</span>`;
   }
 
   wrap.innerHTML = `
@@ -856,9 +940,9 @@ function handleModelState(model) {
 
   _currentModel = model;
   const btn = document.getElementById('refreshClaudeBtn');
-  if (model === 'gemini') {
-    btn.style.display = 'flex';   // show "Switch back to Claude" button
-  } else if (model === 'claude') {
+  if (model !== 'claude') {
+    btn.style.display = 'flex';   // show "Switch back to Claude" for any Gemini variant
+  } else {
     btn.style.display = 'none';   // hide it — Claude is already active
   }
 }
@@ -882,6 +966,54 @@ async function refreshClaude() {
     toast('Could not reach server. Is it running?');
     btn.disabled = false;
     btn.textContent = '✦ Switch back to Claude';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Priority dropdown
+// Click the priority badge on any task to open a floating menu.
+// ═══════════════════════════════════════════════════════════════════════════════
+let _priorityMenu = null;
+
+function openPriorityMenu(e, taskId, currentPriority) {
+  e.stopPropagation();
+  closePriorityMenu();  // close any existing one first
+
+  const menu = document.createElement('div');
+  menu.className = 'priority-menu';
+  menu.id = 'priorityMenu';
+
+  ['high', 'medium', 'low'].forEach(p => {
+    const btn = document.createElement('button');
+    if (p === currentPriority) btn.classList.add('p-active');
+    btn.innerHTML = `<span class="p-dot p-dot-${p}"></span>${p}`;
+    btn.onclick = ev => { ev.stopPropagation(); setPriority(taskId, p); };
+    menu.appendChild(btn);
+  });
+
+  // Position the menu directly below the clicked badge
+  const rect = e.currentTarget.getBoundingClientRect();
+  menu.style.top  = (rect.bottom + 4) + 'px';
+  menu.style.left = rect.left + 'px';
+  document.body.appendChild(menu);
+  _priorityMenu = menu;
+}
+
+function closePriorityMenu() {
+  if (_priorityMenu) { _priorityMenu.remove(); _priorityMenu = null; }
+}
+
+async function setPriority(taskId, priority) {
+  closePriorityMenu();
+  try {
+    await api(`/api/tasks/${taskId}/priority`, {
+      method: 'POST',
+      body: JSON.stringify({ priority }),
+    });
+    await loadTasks();
+    toast(`Priority set to ${priority}`);
+  } catch {
+    toast('Could not update priority — try again.');
   }
 }
 
@@ -970,10 +1102,13 @@ document.addEventListener('keydown', e => {
   }
 });
 
-// Escape → close archive
+// Escape → close archive + priority menu
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') closeArchive();
+  if (e.key === 'Escape') { closeArchive(); closePriorityMenu(); }
 });
+
+// Click anywhere outside → close priority menu
+document.addEventListener('click', () => closePriorityMenu());
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Utilities
@@ -1000,7 +1135,7 @@ function esc(str) {
 // so the next user message gets a fresh attempt at Claude.
 // ═══════════════════════════════════════════════════════════════════════════════
 setInterval(async () => {
-  if (_currentModel !== 'gemini') return;   // Claude already active — nothing to do
+  if (_currentModel === 'claude') return;   // Claude already active — nothing to do
 
   try {
     await api('/api/model/reset', { method: 'POST' });

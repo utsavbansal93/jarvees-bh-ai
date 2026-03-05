@@ -213,6 +213,17 @@ def save_chat_message(role: str, text: str, model: str | None = None) -> None:
         )
 
 
+def update_task_priority(task_id: int, priority: str) -> dict | None:
+    """Change the priority of a task and log it for undo."""
+    with _conn() as c:
+        before = _row(c, task_id)
+        if not before:
+            return None
+        _log(c, "update_priority", before)
+        c.execute("UPDATE tasks SET priority=? WHERE id=?", (priority, task_id))
+        return _row(c, task_id)
+
+
 def get_chat_history(limit: int = 100) -> list[dict]:
     """Return the last `limit` messages in chronological order."""
     with _conn() as c:

@@ -188,7 +188,7 @@ def process_chat(user_message: str, current_tasks: list[dict]) -> tuple[dict, st
 
         try:
             raw = _gemini_response(full_user_content, model)
-            return _parse_json(raw), "gemini"
+            return _parse_json(raw), model   # e.g. "gemini-3-flash-preview"
 
         except Exception as e:
             if _is_gemini_quota_error(e):

@@ -63,6 +63,19 @@ def delete(task_id: int):
     return {"ok": True}
 
 
+class PriorityUpdate(BaseModel):
+    priority: str
+
+@app.post("/api/tasks/{task_id}/priority")
+def update_priority(task_id: int, body: PriorityUpdate):
+    if body.priority not in ("high", "medium", "low"):
+        raise HTTPException(400, "priority must be high, medium, or low")
+    task = db.update_task_priority(task_id, body.priority)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    return task
+
+
 # ── Undo ──────────────────────────────────────────────────────────────────────
 
 @app.post("/api/undo")

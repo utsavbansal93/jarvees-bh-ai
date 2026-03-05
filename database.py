@@ -130,13 +130,9 @@ def has_undo() -> bool:
 
 def add_task(task: dict, parent_id: int | None = None) -> dict:
     with _conn() as c:
-        # Top-level tasks get a sort_order appended to the end; subtasks don't need one
+        # sort_order is NULL by default — tasks sort naturally by priority/deadline.
+        # Explicit ordering (drag-and-drop or move_task_to_position) sets sort_order.
         sort_order = None
-        if not parent_id:
-            max_order = c.execute(
-                "SELECT COALESCE(MAX(sort_order), 0) FROM tasks WHERE parent_id IS NULL"
-            ).fetchone()[0]
-            sort_order = max_order + 1
 
         cur = c.execute("""
             INSERT INTO tasks
@@ -309,6 +305,30 @@ def undo_last() -> tuple[str, dict] | tuple[None, None]:
                 (snapshot.get("parent_id"), snapshot.get("sort_order"), tid)
             )
 
+        elif action == "move_to_position":
+            # Undo positional move → restore all sort_orders to their pre-move values
+            for task_i_id, order_i in snapshot.get("_all_sort_orders", []):
+                c.execute("UPDATE tasks SET sort_order=? WHERE id=?", (order_i, task_i_id))
+
+        elif action == "merge_tasks":
+            # Undo merge → delete the newly created parent, restore both tasks' original positions
+            c.execute("DELETE FROM tasks WHERE id=?", (tid,))
+            c.execute(
+                "UPDATE tasks SET parent_id=?, sort_order=? WHERE id=?",
+                (snapshot.get("task_a_parent_id"), snapshot.get("task_a_sort_order"),
+                 snapshot["task_a_id"])
+            )
+            c.execute(
+                "UPDATE tasks SET parent_id=?, sort_order=? WHERE id=?",
+                (snapshot.get("task_b_parent_id"), snapshot.get("task_b_sort_order"),
+                 snapshot["task_b_id"])
+            )
+
+        elif action == "split_task":
+            # Undo split → delete all created subtasks (parent task is untouched)
+            for sid in snapshot.get("_subtask_ids", []):
+                c.execute("DELETE FROM tasks WHERE id=?", (sid,))
+
         c.execute("DELETE FROM undo_log WHERE id=?", (log["id"],))
 
     return action, snapshot
@@ -333,3 +353,111 @@ def reorder_tasks(ordered_ids: list[int]) -> None:
     with _conn() as c:
         for pos, task_id in enumerate(ordered_ids, start=1):
             c.execute("UPDATE tasks SET sort_order=? WHERE id=?", (pos, task_id))
+
+
+def move_task_to_position(task_id: int, position: int) -> dict | None:
+    """Move a top-level task to a specific 1-based position. Saves full sort_order snapshot for undo."""
+    with _conn() as c:
+        before = _row(c, task_id)
+        if not before:
+            return None
+
+        # Fetch all top-level tasks in current display order
+        all_rows = c.execute("""
+            SELECT id, sort_order FROM tasks
+            WHERE status IN ('active', 'completed') AND parent_id IS NULL
+            ORDER BY
+                CASE WHEN sort_order IS NOT NULL THEN sort_order ELSE 999999 END,
+                CASE status WHEN 'active' THEN 0 ELSE 1 END,
+                CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
+                (deadline IS NULL), deadline ASC, created_at ASC
+        """).fetchall()
+
+        # Log the full pre-move sort_order snapshot so undo can fully restore it
+        _log(c, "move_to_position", {
+            "id": task_id,
+            "_all_sort_orders": [[r[0], r[1]] for r in all_rows],
+        })
+
+        ids = [r[0] for r in all_rows]
+        if task_id in ids:
+            ids.remove(task_id)
+        position = max(1, min(position, len(ids) + 1))
+        ids.insert(position - 1, task_id)
+
+        for pos, tid in enumerate(ids, start=1):
+            c.execute("UPDATE tasks SET sort_order=? WHERE id=?", (pos, tid))
+
+        return _row(c, task_id)
+
+
+def merge_tasks(task_id_a: int, task_id_b: int, merged_title: str) -> dict | None:
+    """Create a new parent task and make two existing tasks its subtasks."""
+    _priority_rank = {"high": 0, "medium": 1, "low": 2}
+
+    with _conn() as c:
+        task_a = _row(c, task_id_a)
+        task_b = _row(c, task_id_b)
+        if not task_a or not task_b:
+            return None
+
+        # Inherit the higher priority and sum durations
+        best_priority = min(
+            task_a.get("priority", "medium"),
+            task_b.get("priority", "medium"),
+            key=lambda p: _priority_rank.get(p, 1),
+        )
+        combined_dur = (task_a.get("estimated_duration") or 20) + (task_b.get("estimated_duration") or 20)
+
+        cur = c.execute("""
+            INSERT INTO tasks (title, priority, task_type, estimated_duration)
+            VALUES (?, ?, 'quick', ?)
+        """, (merged_title, best_priority, combined_dur))
+        parent_id = cur.lastrowid
+
+        # Log for undo before modifying the child tasks
+        _log(c, "merge_tasks", {
+            "id": parent_id,
+            "task_a_id":        task_id_a,
+            "task_a_parent_id": task_a.get("parent_id"),
+            "task_a_sort_order": task_a.get("sort_order"),
+            "task_b_id":        task_id_b,
+            "task_b_parent_id": task_b.get("parent_id"),
+            "task_b_sort_order": task_b.get("sort_order"),
+        })
+
+        c.execute("UPDATE tasks SET parent_id=?, sort_order=NULL WHERE id=?", (parent_id, task_id_a))
+        c.execute("UPDATE tasks SET parent_id=?, sort_order=NULL WHERE id=?", (parent_id, task_id_b))
+
+        return _row(c, parent_id)
+
+
+def split_task(task_id: int, subtasks: list[dict]) -> dict | None:
+    """Break a task into subtasks; the original task becomes the parent."""
+    with _conn() as c:
+        parent = _row(c, task_id)
+        if not parent:
+            return None
+
+        subtask_ids = []
+        for s in subtasks:
+            cur = c.execute("""
+                INSERT INTO tasks
+                    (title, deadline, estimated_duration, priority, task_type, recurrence, parent_id)
+                VALUES
+                    (:title, :deadline, :estimated_duration, :priority, :task_type, :recurrence, :parent_id)
+            """, {
+                "title":              s.get("title", "Subtask"),
+                "deadline":           s.get("deadline"),
+                "estimated_duration": s.get("estimated_duration", 20),
+                "priority":           s.get("priority", parent.get("priority", "medium")),
+                "task_type":          s.get("task_type", "quick"),
+                "recurrence":         s.get("recurrence"),
+                "parent_id":          task_id,
+            })
+            subtask_ids.append(cur.lastrowid)
+
+        # Log with subtask IDs so undo can delete them
+        _log(c, "split_task", {**parent, "_subtask_ids": subtask_ids})
+
+        return _row(c, task_id)

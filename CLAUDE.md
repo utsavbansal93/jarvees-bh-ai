@@ -143,11 +143,13 @@ Key files:
 |------|---------|
 | `CLAUDE.md` | This file — permanent session memory |
 | `CHANGELOG.md` | Detailed change log per session |
+| `BACKLOG.md` | Designed features not yet scheduled (e.g. error queue) |
+| `.claudeignore` | Files Claude doesn't need to read (db, venv, pycache, .claude/) |
 | `.env` | API keys — never commit |
 | `.gitignore` | Excludes `.env`, `*.db`, `__pycache__`, `.claude/` |
-| `main.py` | FastAPI entry point — all HTTP routes |
-| `database.py` | SQLite task store (tasks + undo_log tables) |
-| `chat_handler.py` | Claude → Gemini fallback AI routing |
+| `main.py` | FastAPI entry point — all HTTP routes + `_execute_action()` helper |
+| `database.py` | SQLite task store (tasks + undo_log + chat_log tables) |
+| `chat_handler.py` | Unified cascade: Claude → Gemini x3; failure tracking; response time stats |
 | `task_parser.py` | Phase 1 CLI parser (standalone, pre-UI) |
 | `static/index.html` | Single-page web UI |
 | `requirements.txt` | Python dependencies |
@@ -156,19 +158,25 @@ Key files:
 
 ---
 
-## Current Tech Decisions (as of Session 5)
+## Current Tech Decisions (as of Session 6)
 
 | Decision | Chosen Approach |
 |----------|----------------|
 | AI primary | Claude Sonnet (`claude-sonnet-4-6`) via Anthropic API |
-| AI fallback | 3-model cascade: `gemini-3-flash-preview` → `gemini-2.5-flash` → `gemini-2.5-flash-lite`; quota errors blacklist model for session; 503 errors fall through without blacklisting |
-| Fallback trigger | Billing error on Claude → cascade; manual reset button + 15-min auto-retry |
-| Undo | Zero-cost regex intercept in `main.py`; DB actions logged with snapshots; undo_last() handles add/complete/uncomplete/delete/update_priority/make_subtask |
+| AI fallback | 3-model cascade: `gemini-3-flash-preview` → `gemini-2.5-flash` → `gemini-2.5-flash-lite` |
+| Failure tracking | Unified `_failed_models: dict[str, str\|float]`; `"permanent"` = billing/quota (session-long); `float` timestamp = transient 503 (5-min cooldown); `reset_claude_flag()` clears all |
+| Cascade log | Every API response includes `cascade_log: list[{model, failed, reason, elapsed_s}]`; frontend mirrors failure state via `_frontendFailedModels` Set |
+| Response times | `_model_response_times: dict[str, deque(maxlen=20)]`; p90 via `GET /api/model/stats` |
+| Retry button | "↑ Retry with better model" — calls `POST /api/model/reset`, clears frontend `_frontendFailedModels`, hides itself |
+| 15-min auto-retry | `setInterval` checks `_frontendFailedModels.size > 0`; resets both server and frontend; re-shows button if Claude still fails |
+| Undo | Zero-cost regex intercept in `main.py`; DB actions logged with snapshots; `undo_last()` handles add/complete/uncomplete/delete/update_priority/make_subtask/move_to_position/merge_tasks/split_task |
 | Storage | SQLite via Python `sqlite3` (no ORM) |
-| Task hierarchy | `parent_id` column; subtasks cascade on complete/delete; make_subtask via chat |
-| Task ordering | `sort_order` column; drag-and-drop sets order via `POST /api/tasks/reorder`; new tasks append at end |
+| Task hierarchy | `parent_id` column; subtasks cascade on complete/delete; make_subtask/merge/split via chat |
+| Task ordering | `sort_order = NULL` for new tasks → natural priority/deadline sort; drag-and-drop or `move_task_to_position` assigns explicit integer sort_order |
 | Chat history | Server-side `chat_log` SQLite table — persists across all browser sessions and restarts |
-| Priority editing | Click badge → floating dropdown → `POST /api/tasks/:id/priority`; or say "set task N to high priority" |
+| Priority editing | Click badge → floating dropdown → `POST /api/tasks/:id/priority`; or "set task N to high priority" |
+| Confirm UX | AI returns `{"action":"confirm","options":[...]}` when uncertain; frontend shows clickable option buttons; user selection → `POST /api/chat/confirm` (pre-formed action, no second AI call) |
+| Action routing | `_execute_action()` helper in `main.py` shared by both `POST /api/chat` and `POST /api/chat/confirm` |
 | How to start server | `python3 -m uvicorn main:app --reload --port 8000` in Terminal |
 
 ## Pending Decisions (No Rush, Needed Before Phase 2)
@@ -308,5 +316,28 @@ Key files:
 - `get_active_tasks()` orders by sort_order first; NULL falls back to old logic
 - `db.reorder_tasks(ordered_ids)` + `POST /api/tasks/reorder` endpoint
 - UI: `⠿` drag handle on every task card; HTML5 DnD with upper/lower-half detection; `drag-before`/`drag-after` border indicators; optimistic DOM move + async persist; reverts on error
+
+**Phase 1 status:** Task parser ✅ | Calendar connector ⬜ | SQLite store ✅ | Scheduler ⬜ | Web UI ✅
+
+---
+
+### Session 6 — Unified cascade, merge/split/move, typing model hint, confirm UI
+
+**Bug fixes:**
+- `add_task()` no longer auto-assigns `sort_order` — new tasks default to `NULL` so they sort naturally by priority bucket (high→medium→low) → deadline → created_at
+- `move_task_to_position` added to `SYSTEM_PROMPT` so "priority 1" / "make this #1" correctly moves position rather than changing the priority bucket
+- Gemini `thought_signature` warning silenced by iterating `response.candidates[0].content.parts` and filtering only text parts
+- All model failures now skip cleanly on next request: unified `_failed_models` dict handles permanent (billing/quota) and transient (503, 5-min cooldown) failures
+
+**New features:**
+- **Three new task operations**: `move_task_to_position`, `merge_tasks`, `split_task` — all in SYSTEM_PROMPT, `main.py` handlers, `database.py` functions, with full undo support
+- **Confirm UX**: AI returns `{"action":"confirm","options":[...]}` when uncertain; frontend renders clickable option buttons; selection goes to `POST /api/chat/confirm` (no second AI call)
+- **Typing indicator with model hint**: shows which model is expected + elapsed time counter while waiting; `_frontendFailedModels` Set updated from `cascade_log` on each response
+- **Cascade log note** below messages: `✦ Claude ✗ 0.3s → ✦ Gemini 3 ✓ 1.4s` (only shown when cascade happened)
+- **Response time tracking**: `_model_response_times` deque per model; p90 at `GET /api/model/stats`; `GET /api/model/status` shows full cascade availability
+- **"Retry with better model" button**: renamed from "Switch back to Claude"; clears both server and frontend failure state
+- **`_execute_action()` helper** in `main.py`: shared by `POST /api/chat` and `POST /api/chat/confirm` — no code duplication
+- **`.claudeignore`**: excludes tasks.db, venv, pycache, .claude/, logs
+- **`BACKLOG.md`**: full design spec for the error-handling queue feature
 
 **Phase 1 status:** Task parser ✅ | Calendar connector ⬜ | SQLite store ✅ | Scheduler ⬜ | Web UI ✅

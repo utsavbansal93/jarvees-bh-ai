@@ -574,6 +574,61 @@
     .task-group.drag-before { border-top: 2px solid var(--brand); padding-top: 3px; border-radius: 10px; }
     .task-group.drag-after  { border-bottom: 2px solid var(--brand); padding-bottom: 3px; border-radius: 10px; }
 
+    /* ── Typing indicator with model hint ───────────────────────────────── */
+    .typing-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      align-self: flex-start;
+    }
+    .typing-meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0 4px;
+      font-size: 10px;
+      color: var(--muted);
+      font-weight: 500;
+    }
+    .typing-elapsed {
+      font-variant-numeric: tabular-nums;
+      font-weight: 400;
+    }
+
+    /* ── Cascade log note ────────────────────────────────────────────────── */
+    .cascade-log-note {
+      font-size: 10px;
+      color: var(--muted);
+      margin-top: 2px;
+      padding: 0 4px;
+      line-height: 1.6;
+      font-style: italic;
+    }
+
+    /* ── Confirm options ─────────────────────────────────────────────────── */
+    .confirm-options {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-top: 6px;
+      max-width: 82%;
+    }
+    .confirm-btn {
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      border: 1px solid var(--brand);
+      background: var(--brand-light);
+      color: var(--brand);
+      font-family: inherit;
+      text-align: left;
+      transition: all .15s;
+    }
+    .confirm-btn:hover:not(:disabled) { background: var(--brand); color: #fff; }
+    .confirm-btn:disabled { opacity: .4; cursor: default; }
+
     /* ── Toast ───────────────────────────────────────────────────────────── */
     #toast {
       position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
@@ -596,8 +651,8 @@
     <button class="btn" id="undoBtn" onclick="doUndo()" disabled title="Undo last action (⌘Z)">
       ↩ Undo
     </button>
-    <button class="btn" id="refreshClaudeBtn" onclick="refreshClaude()" style="display:none" title="Retry with Claude">
-      ✦ Switch back to Claude
+    <button class="btn" id="refreshClaudeBtn" onclick="refreshClaude()" style="display:none" title="Retry with better model">
+      ↑ Retry with better model
     </button>
     <button class="btn" onclick="openArchive()">
       📦 Archived
@@ -879,6 +934,43 @@ function modelCssClass(model) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Frontend cascade state
+// Mirrors the backend's _failed_models so we can show which model will be tried
+// in the typing indicator before the response comes back.
+// Updated from cascade_log on every response; cleared on model reset.
+// ═══════════════════════════════════════════════════════════════════════════════
+const FRONTEND_CASCADE = ['claude', 'gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'];
+let _frontendFailedModels = new Set();
+let _pendingConfirmOptions = [];  // options from the last confirm action
+
+function getNextExpectedModel() {
+  return FRONTEND_CASCADE.find(m => !_frontendFailedModels.has(m)) || null;
+}
+
+function updateFailedModelsFromLog(cascadeLog) {
+  if (!Array.isArray(cascadeLog)) return;
+  cascadeLog.forEach(entry => {
+    // Mark models that had a real failure (not just "skipped because already failed")
+    if (entry.failed && entry.reason && entry.reason !== 'skipped') {
+      _frontendFailedModels.add(entry.model);
+    }
+  });
+}
+
+function buildCascadeNote(cascadeLog) {
+  if (!Array.isArray(cascadeLog)) return '';
+  // Only include entries that actually ran (skip pre-skipped ones)
+  const ran = cascadeLog.filter(e => e.reason !== 'skipped');
+  if (ran.length <= 1 && !ran.some(e => e.failed)) return '';
+  const parts = ran.map(e => {
+    const label = MODEL_LABELS[e.model] || e.model;
+    if (e.failed) return `${label} ✗ ${e.elapsed_s}s`;
+    return `${label} ✓ ${e.elapsed_s}s`;
+  });
+  return `<div class="cascade-log-note">${parts.join(' → ')}</div>`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Chat
 // ═══════════════════════════════════════════════════════════════════════════════
 async function sendChat() {
@@ -899,7 +991,17 @@ async function sendChat() {
       body: JSON.stringify({ message: msg }),
     });
     removeTyping(typingId);
-    addMsg('jarvees', result.message || 'Done.', result.model);
+
+    // Update frontend's failure map from what the server actually tried
+    updateFailedModelsFromLog(result.cascade_log);
+
+    if (result.action === 'confirm') {
+      // AI is unsure — show labeled options for the user to pick
+      addConfirmMsg(result.message, result.options || [], result.cascade_log);
+    } else {
+      addMsg('jarvees', result.message || 'Done.', result.model, result.cascade_log);
+    }
+
     handleModelState(result.model);
     await loadTasks();
   } catch (e) {
@@ -911,7 +1013,7 @@ async function sendChat() {
   }
 }
 
-function addMsg(role, text, model) {
+function addMsg(role, text, model, cascadeLog) {
   const box  = document.getElementById('chatMessages');
   const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const wrap = document.createElement('div');
@@ -924,12 +1026,64 @@ function addMsg(role, text, model) {
     badgeHtml = `<span class="model-badge model-${modelCssClass(model)}">${label}</span>`;
   }
 
+  // Cascade log note — shown when multiple models were tried
+  const cascadeHtml = (role === 'jarvees' && cascadeLog) ? buildCascadeNote(cascadeLog) : '';
+
   wrap.innerHTML = `
     <div class="msg ${role}">${esc(text)}</div>
     ${badgeHtml}
+    ${cascadeHtml}
     <span class="msg-time">${time}</span>`;
   box.appendChild(wrap);
   box.scrollTop = box.scrollHeight;
+}
+
+function addConfirmMsg(message, options, cascadeLog) {
+  const box  = document.getElementById('chatMessages');
+  const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const wrap = document.createElement('div');
+  wrap.className = 'msg-wrap jarvees';
+
+  const cascadeHtml = buildCascadeNote(cascadeLog || []);
+  const optionsHtml = options.map((opt, i) =>
+    `<button class="confirm-btn" onclick="executeConfirm(${i})">${esc(opt.label)}</button>`
+  ).join('');
+
+  wrap.innerHTML = `
+    <div class="msg jarvees">${esc(message)}</div>
+    ${cascadeHtml}
+    <div class="confirm-options">${optionsHtml}</div>
+    <span class="msg-time">${time}</span>`;
+
+  _pendingConfirmOptions = options;   // store for executeConfirm()
+  box.appendChild(wrap);
+  box.scrollTop = box.scrollHeight;
+}
+
+async function executeConfirm(idx) {
+  const option = _pendingConfirmOptions[idx];
+  if (!option) return;
+
+  // Disable all confirm buttons to prevent double-click
+  document.querySelectorAll('.confirm-btn').forEach(btn => btn.disabled = true);
+
+  addMsg('user', option.label);
+  const typingId = addTyping();
+
+  try {
+    const result = await api('/api/chat/confirm', {
+      method: 'POST',
+      body: JSON.stringify({ action: option.action }),
+    });
+    removeTyping(typingId);
+    updateFailedModelsFromLog(result.cascade_log || []);
+    addMsg('jarvees', result.message || 'Done.', result.model, result.cascade_log);
+    handleModelState(result.model);
+    await loadTasks();
+  } catch (e) {
+    removeTyping(typingId);
+    addMsg('jarvees', 'Something went wrong. Please try again.', 'error');
+  }
 }
 
 function addTyping() {
@@ -937,16 +1091,37 @@ function addTyping() {
   const id  = 'typ-' + Date.now();
   const el  = document.createElement('div');
   el.id = id;
-  el.className = 'typing';
-  el.innerHTML = '<span></span><span></span><span></span>';
+  el.className = 'typing-wrap';
+
+  const expectedModel = getNextExpectedModel();
+  const modelLabel = expectedModel ? (MODEL_LABELS[expectedModel] || expectedModel) : 'AI';
+
+  el.innerHTML = `
+    <div class="typing-meta">
+      <span class="typing-model-label">${esc(modelLabel)}</span>
+      <span class="typing-elapsed">0s</span>
+    </div>
+    <div class="typing"><span></span><span></span><span></span></div>`;
+
   box.appendChild(el);
   box.scrollTop = box.scrollHeight;
+
+  // Tick elapsed time every second
+  const startTime = Date.now();
+  el._timerId = setInterval(() => {
+    const elapsed = el.querySelector('.typing-elapsed');
+    if (elapsed) elapsed.textContent = Math.round((Date.now() - startTime) / 1000) + 's';
+  }, 1000);
+
   return id;
 }
 
 function removeTyping(id) {
   const el = document.getElementById(id);
-  if (el) el.remove();
+  if (el) {
+    if (el._timerId) clearInterval(el._timerId);
+    el.remove();
+  }
 }
 
 // ─── Model state ──────────────────────────────────────────────────────────────
@@ -970,22 +1145,21 @@ function handleModelState(model) {
 async function refreshClaude() {
   const btn = document.getElementById('refreshClaudeBtn');
   btn.disabled = true;
-  btn.textContent = '⏳ Switching…';
+  btn.textContent = '⏳ Resetting…';
   try {
     await api('/api/model/reset', { method: 'POST' });
-    // Flag reset on server. Next message will try Claude.
-    // Optimistically hide the button — if Claude still fails on next
-    // message it will show again via handleModelState().
+    // Clear both server flags (via API) and frontend mirror
+    _frontendFailedModels.clear();
     _currentModel = 'claude';
     btn.style.display = 'none';
-    toast('✦ Claude is queued — your next message will use Claude.');
+    toast('↑ Reset — next message will try the best available model.');
     addMsg('jarvees',
-      "I've cleared the Gemini fallback. Your next message will go to Claude — if it's still unavailable I'll let you know.",
+      "I've reset the model fallback. Your next message will start from Claude again — if it's still unavailable I'll cascade down automatically.",
       'system');
   } catch {
     toast('Could not reach server. Is it running?');
     btn.disabled = false;
-    btn.textContent = '✦ Switch back to Claude';
+    btn.textContent = '↑ Retry with better model';
   }
 }
 
@@ -1242,15 +1416,18 @@ function esc(str) {
 // so the next user message gets a fresh attempt at Claude.
 // ═══════════════════════════════════════════════════════════════════════════════
 setInterval(async () => {
-  if (_currentModel === 'claude') return;   // Claude already active — nothing to do
+  if (_frontendFailedModels.size === 0) return;   // nothing to reset
 
   try {
     await api('/api/model/reset', { method: 'POST' });
-    // Flag cleared on server. We won't announce this to the user — the badge on
-    // their next real message will confirm which model actually responded.
-    // If Claude is still broken, chat_handler will fall back to Gemini again
-    // and handleModelState() will re-show the button automatically.
-    console.log('[Jarvees] 15-min auto-retry: Claude flag reset. Next message will try Claude.');
+    // Clear both backend and frontend failure state.
+    // The badge on the next real message will confirm which model actually ran.
+    // If a model is still broken, the cascade_log from that response will re-populate
+    // _frontendFailedModels and re-show the retry button via handleModelState().
+    _frontendFailedModels.clear();
+    _currentModel = 'claude';
+    document.getElementById('refreshClaudeBtn').style.display = 'none';
+    console.log('[Jarvees] 15-min auto-retry: model flags reset. Next message will try Claude.');
   } catch {
     // Server unreachable — silently skip this cycle.
   }

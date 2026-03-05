@@ -1,0 +1,32 @@
+# Files Claude doesn't need to read — excluded to keep context lean
+
+# Database (runtime data only — use SQLite shell or backend to inspect)
+tasks.db
+*.db
+*.db-shm
+*.db-wal
+
+# Python virtual environments
+venv/
+.venv/
+env/
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# macOS metadata
+.DS_Store
+
+# Claude internal files (hooks, launch config, memory — not source code)
+.claude/
+
+# Log files
+*.log
+
+# Build artifacts / distribution
+dist/
+build/
+*.egg-info/

@@ -5,6 +5,58 @@ Format: `[Session N — Date] — Short title` followed by details.
 
 ---
 
+## [Session 6 — 2026-03-05] — Unified cascade, merge/split/move, typing model hint, confirm UI
+
+### Fixed
+- **"Priority 1" was changing priority bucket instead of position**: AI had no `move_task_to_position` action, so it fell back to `update_priority` with `priority="high"`. Fixed by adding `move_task_to_position` to `SYSTEM_PROMPT` with an explicit rule: positional intent ("priority 1", "move to top", "make this #2") → `move_task_to_position`; bucket intent ("set to high priority") → `update_priority`.
+- **Low-priority tasks were not naturally sinking to bottom**: `add_task()` always assigned explicit `sort_order = max+1`, pinning every new task ahead of lower-priority tasks added earlier. Fixed by removing the auto sort_order block — new tasks have `sort_order = NULL` and sort by priority bucket (high→medium→low) → deadline → created_at. Drag-and-drop and `move_task_to_position` still write explicit sort_order values.
+- **Gemini `thought_signature` warning**: `_gemini_response()` was calling `response.text` which triggers `Warning: there are non-text parts in the response: ['thought_signature']` on newer reasoning models. Fixed by iterating `response.candidates[0].content.parts` and explicitly extracting only parts with a `.text` attribute.
+- **Any-model failures not being skipped on next request**: Only Claude billing and Gemini quota were blacklisted. 503/transient errors were re-tried on every request. Unified into a single `_failed_models: dict[str, str | float]` with permanent and time-based cooldown modes.
+
+### Added
+- **Unified model failure tracking** (`chat_handler.py`)
+  - Single `_failed_models: dict[str, str | float]` replaces `_claude_billing_failed` bool + `_failed_gemini_models` set
+  - `"permanent"` value = billing/quota failures (skip for entire session until reset)
+  - `float` timestamp value = transient 503/overloaded failures (skip for `TRANSIENT_COOLDOWN_SECS = 300` seconds, then auto-eligible again)
+  - `_is_model_available(model_id)` checks permanent vs. cooldown expiry
+  - `_mark_model_failed(model_id, *, permanent)` records failure type
+  - `reset_claude_flag()` now just calls `_failed_models.clear()` — resets everything
+- **cascade_log on every response**: `process_message()` returns 3-tuple `(action_dict, model_used, cascade_log)`. Each log entry: `{"model": "...", "failed": bool, "reason": "billing|quota|transient|skipped", "elapsed_s": float}`. Returned in every API response as `cascade_log`.
+- **Response time tracking**: `_model_response_times: dict[str, deque(maxlen=20)]` records successful call durations. `get_model_stats()` computes p90, last, and n per model. Exposed at `GET /api/model/stats`.
+- **`GET /api/model/status` endpoint**: Returns availability state for every model in the cascade (available, reason, cooldown_remaining).
+- **Three new AI task operations** (in `SYSTEM_PROMPT`, `main.py`, `database.py`):
+  - `move_task_to_position`: Moves a task to a specific 1-based list position. Assigns explicit sort_order to all top-level tasks. Undo restores the full pre-move sort_order snapshot for every task.
+  - `merge_tasks`: Creates a new parent task and makes two existing tasks its subtasks. Inherits higher priority, sums durations. Undo deletes the parent and restores both tasks' original parent_id and sort_order.
+  - `split_task`: AI logically decomposes an existing task's title into steps and creates them as subtasks. The original task becomes the parent. Undo deletes the created subtasks.
+- **Confirm UI** (`SYSTEM_PROMPT`, `main.py`, `index.html`)
+  - AI returns `{"action":"confirm","options":[{"label":"...","action":{...}},...],"message":"Which did you mean?"}` when genuinely uncertain between 2-3 interpretations
+  - Frontend renders options as clickable buttons below the message bubble
+  - User clicks → `POST /api/chat/confirm` with the pre-formed inner action dict → executes directly, no second AI call
+  - `_execute_action()` helper refactored out of `chat()` and reused by both endpoints
+- **Loading indicator with model hint + elapsed timer** (`index.html`)
+  - Typing indicator now shows which model is expected to be tried (based on `_frontendFailedModels` set)
+  - Elapsed time counter ticks every second while waiting
+  - `removeTyping()` calls `clearInterval` on the timer before removal
+- **Cascade log note on messages** (`index.html`)
+  - When multiple models were tried, a small italic line appears below the message: e.g. `✦ Claude ✗ 0.3s → ✦ Gemini 3 ✓ 1.4s`
+  - Built by `buildCascadeNote(cascadeLog)` — only shows when there were actual failures (skips clean single-model responses)
+- **Frontend cascade state mirroring** (`index.html`)
+  - `_frontendFailedModels: Set` updated from `cascade_log` on every response
+  - `getNextExpectedModel()` returns first non-failed model for the loading indicator
+  - `updateFailedModelsFromLog(cascadeLog)` populates the set from response data
+  - Cleared on "Retry with better model" click and on 15-min auto-retry
+- **"Retry with better model" button** — renamed from "Switch back to Claude"; now reflects that any failed model may be retried, not just Gemini→Claude.
+- **`.claudeignore`** — excludes `tasks.db`, `*.db`, `venv/`, `__pycache__/`, `.claude/`, `*.log` from Claude's reading context.
+- **`BACKLOG.md`** — full design spec for the Error Handling / Request Queue feature (queued_requests table, retry worker, cancel button, completion notification).
+
+### Changed
+- **`add_task()`** — removed auto `sort_order = max+1` assignment for top-level tasks. New tasks default to `sort_order = NULL`, sorting naturally by priority bucket → deadline → created_at. Explicit ordering still available via drag-and-drop or `move_task_to_position`.
+- **`main.py` refactored**: action routing extracted into `_execute_action(action, tasks, model_used, cascade_log) → dict`. Both `POST /api/chat` and `POST /api/chat/confirm` call this helper, eliminating code duplication.
+- **Confirm messages** not saved to `chat_log` (they're transient UI state — only the user's selection and the resulting action are persisted).
+- **SYSTEM_PROMPT** updated with rule: "when a task has subtasks the parent's `estimated_duration` should be the sum of its subtasks, not an independent estimate" — prevents the parent showing an arbitrary estimate that's lower than a single subtask.
+
+---
+
 ## [Session 5 — 2026-03-05] — make_subtask, update_priority via chat, drag-and-drop
 
 ### Fixed

@@ -5,6 +5,53 @@ Format: `[Session N — Date] — Short title` followed by details.
 
 ---
 
+## [Session 4 — 2026-03-05] — Gemini Cascade, Server-Side History, UI Polish
+
+### Added
+- **3-model Gemini cascade** (`chat_handler.py`)
+  - Tries models in order: `gemini-3-flash-preview` → `gemini-2.5-flash` → `gemini-2.5-flash-lite`
+  - `_failed_gemini_models` set skips quota-exhausted models for the rest of the session
+  - `reset_claude_flag()` now also clears `_failed_gemini_models`
+  - Returns actual model ID (e.g. `"gemini-3-flash-preview"`) instead of generic `"gemini"`
+  - Raises a clear "all models exhausted" exception when entire cascade fails
+- **Server-side chat history** (replaces localStorage)
+  - `chat_log` SQLite table: `id`, `role`, `text`, `model`, `timestamp`
+  - `save_chat_message(role, text, model)` — called on every AI exchange
+  - `get_chat_history(limit=100)` — returns messages in chronological order
+  - `GET /api/chat/history` endpoint (`main.py`)
+  - `POST /api/chat` now persists both user and Jarvees messages to `chat_log`
+  - Undo commands are NOT logged (ephemeral UI actions)
+  - UI: `loadChatHistory()` fetches from server on page load; renders with session dividers
+- **Priority inline editing**
+  - `update_task_priority(task_id, priority)` in `database.py` — logs to undo_log before updating
+  - `POST /api/tasks/{id}/priority` endpoint with `PriorityUpdate` Pydantic model
+  - UI: priority badge is now clickable — opens a floating dropdown with high / medium / low options (colour-dot + label)
+  - Dropdown closes on option select, Escape, or click-outside; toast confirms change
+- **System architecture diagrams** — `static/diagram.html` (served at `/static/diagram.html`)
+  - Diagram 1: Module Map (all components and data flows)
+  - Diagram 2: Chat Message Flow (step-by-step from Send to UI update)
+  - Rendered with Mermaid.js on a dark-themed page
+
+### Changed
+- **Subtask display**: redesigned from mini-cards to an indented bulleted list
+  - Brand-accent left border, lightweight checkboxes, duration label inline
+  - CSS: `.subtask-list` / `.subtask-item` / `.subtask-check` / `.subtask-title` / `.sub-dur`
+- **Model badge labels**: specific names instead of generic "✦ Gemini"
+  - `gemini-3-flash-preview` → `✦ Gemini 3`
+  - `gemini-2.5-flash` → `✦ Gemini 2.5`
+  - `gemini-2.5-flash-lite` → `✦ Gemini 2.5 Lite`
+  - New `MODEL_LABELS` constant and `modelCssClass()` helper (maps all Gemini variants to `model-gemini` CSS class)
+- **`handleModelState()`**: changed `if (model === 'gemini')` → `if (model !== 'claude')` to correctly show "Switch back to Claude" button for any Gemini model ID
+- **15-min auto-retry timer**: changed `_currentModel !== 'gemini'` → `_currentModel === 'claude'` for same reason
+- **`loadChatHistory()`**: uses shared `MODEL_LABELS` / `modelCssClass()` instead of local label map
+
+### Fixed
+- Chat history not persisting between sessions — localStorage was wiped in Claude Code preview's ephemeral browser context; fixed by moving persistence to SQLite
+- `gemini` badge not reflecting specific fallback model used
+- "Switch back to Claude" button not appearing for non-`"gemini"` Gemini model IDs
+
+---
+
 ## [Session 3 — 2026-03-05] — Smart AI Fallback, Chat History, Dev Tooling
 
 ### Added

@@ -156,17 +156,18 @@ Key files:
 
 ---
 
-## Current Tech Decisions (as of Session 3)
+## Current Tech Decisions (as of Session 4)
 
 | Decision | Chosen Approach |
 |----------|----------------|
 | AI primary | Claude Sonnet (`claude-sonnet-4-6`) via Anthropic API |
-| AI fallback | Gemini 2.0 Flash via `google.genai` SDK (free tier) |
-| Fallback trigger | Billing error on Claude → auto-switch; manual reset button + 15-min auto-retry |
+| AI fallback | 3-model cascade: `gemini-3-flash-preview` → `gemini-2.5-flash` → `gemini-2.5-flash-lite` via `google.genai` SDK |
+| Fallback trigger | Billing error on Claude → cascade; quota-hit models skipped per session; manual reset button + 15-min auto-retry |
 | Undo | Zero-cost — intercepted by regex in `main.py` before any AI call |
 | Storage | SQLite via Python `sqlite3` (no ORM) |
 | Task hierarchy | `parent_id` column; subtasks cascade on complete/delete |
-| Chat history | `localStorage` — max 40 msgs, 2 prior sessions, paginated |
+| Chat history | Server-side `chat_log` SQLite table — persists across all browser sessions and restarts |
+| Priority editing | Click any priority badge → floating dropdown → `POST /api/tasks/:id/priority` |
 | How to start server | `python3 -m uvicorn main:app --reload --port 8000` in Terminal |
 
 ## Pending Decisions (No Rush, Needed Before Phase 2)
@@ -254,5 +255,31 @@ Key files:
 - `.claude/launch.json` created — registers Jarvees Backend as a Claude Code preview server
 - Server start command for preview: `python3 -m uvicorn main:app --port 8000 --loop asyncio`
 - Note: `uvicorn[standard]` C extensions (uvloop, httptools) are blocked by macOS preview sandbox; run directly from Terminal for development with `--reload`
+
+**Phase 1 status:** Task parser ✅ | Calendar connector ⬜ | SQLite store ✅ | Scheduler ⬜ | Web UI ✅
+
+---
+
+### Session 4 — Gemini Cascade + Server-Side History + UI Polish
+
+**Gemini 3-model cascade:**
+- `chat_handler.py` now tries `gemini-3-flash-preview` → `gemini-2.5-flash` → `gemini-2.5-flash-lite` in order
+- `_failed_gemini_models` set tracks quota-exhausted models per session (skipped on subsequent calls)
+- `reset_claude_flag()` also clears `_failed_gemini_models`
+- Returns actual model ID (e.g. `"gemini-3-flash-preview"`) instead of generic `"gemini"` string
+
+**Server-side chat history (replaced localStorage):**
+- Root cause of history loss: Claude Code preview browser uses ephemeral localStorage (wiped on restart)
+- Fix: new `chat_log` SQLite table; every AI exchange persisted by `POST /api/chat`
+- `GET /api/chat/history` returns last 100 messages; UI fetches on load and renders with session dividers
+- Undo commands intentionally NOT saved (ephemeral UI actions)
+
+**Three UI improvements:**
+- **Specific Gemini model badge**: `MODEL_LABELS` constant maps each model ID to a display name (✦ Gemini 3 / ✦ Gemini 2.5 / ✦ Gemini 2.5 Lite); `modelCssClass()` helper maps all Gemini variants to `model-gemini` CSS class
+- **Subtask indented list**: redesigned from mini-cards to `<ul>/<li>` structure with brand-accent left border, inline checkboxes, and duration label
+- **Priority dropdown**: click any priority badge → floating `high/medium/low` menu with colour dots → `POST /api/tasks/:id/priority`; `update_task_priority()` in `database.py` logs to undo_log; closes on Escape or click-outside
+
+**Architecture diagrams:**
+- `static/diagram.html` — Mermaid.js Module Map + Chat Message Flow diagrams on dark-themed page
 
 **Phase 1 status:** Task parser ✅ | Calendar connector ⬜ | SQLite store ✅ | Scheduler ⬜ | Web UI ✅

@@ -5,6 +5,27 @@ Format: `[Session N — Date] — Short title` followed by details.
 
 ---
 
+## [Session 5 — 2026-03-05] — make_subtask, update_priority via chat, drag-and-drop
+
+### Fixed
+- **make_subtask was silently a no-op**: AI had no action for nesting tasks — returned `"action":"chat"` and claimed success while writing nothing to the DB. Fixed by adding `make_subtask` action to `SYSTEM_PROMPT`, a new `db.make_subtask(child_id, parent_id)` DB function, `_resolve_by_number()` helper in `main.py`, and the action handler in `POST /api/chat`.
+- **update_priority via chat was also a no-op**: Same root cause. Fixed by adding `update_priority` action to `SYSTEM_PROMPT` and routing it to the existing `db.update_task_priority()`.
+- **undo_last() didn't handle update_priority**: The action was logged but never reversed. Added `elif action == "update_priority"` branch that restores the original priority from the snapshot.
+- **Gemini 503 "model overloaded" crashed instead of cascading**: `_is_gemini_transient_error()` now catches 503/UNAVAILABLE errors and falls through to the next cascade model without blacklisting it (unlike quota errors which do blacklist for the session).
+
+### Added
+- **make_subtask AI action**: `{"action":"make_subtask","task_number":5,"parent_number":4}` — nests an existing top-level task under another; clears its sort_order; undo restores original parent_id and sort_order.
+- **update_priority AI action**: `{"action":"update_priority","task_number":6,"priority":"high"}` — changes priority of an existing task via natural language.
+- **Drag-and-drop task reordering**
+  - `sort_order INTEGER` column in `tasks` table (auto-migrated); set on new top-level tasks, NULL for subtasks.
+  - `get_active_tasks()` orders by `sort_order` first (NULL falls back to priority/deadline logic — fully backwards compatible).
+  - `db.reorder_tasks(ordered_ids)` updates sort_order for all visible tasks.
+  - `POST /api/tasks/reorder` endpoint.
+  - UI: `⠿` drag handle on every task card; `initDragDrop()` attaches HTML5 DnD listeners after each render; upper/lower-half mouse detection shows `drag-before` / `drag-after` border indicator; optimistic DOM reorder + async persist to server; reverts on error.
+  - `undo_last()` delete branch now also restores `sort_order` from snapshot.
+
+---
+
 ## [Session 4 — 2026-03-05] — Gemini Cascade, Server-Side History, UI Polish
 
 ### Added

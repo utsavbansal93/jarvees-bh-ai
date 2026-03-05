@@ -156,18 +156,19 @@ Key files:
 
 ---
 
-## Current Tech Decisions (as of Session 4)
+## Current Tech Decisions (as of Session 5)
 
 | Decision | Chosen Approach |
 |----------|----------------|
 | AI primary | Claude Sonnet (`claude-sonnet-4-6`) via Anthropic API |
-| AI fallback | 3-model cascade: `gemini-3-flash-preview` → `gemini-2.5-flash` → `gemini-2.5-flash-lite` via `google.genai` SDK |
-| Fallback trigger | Billing error on Claude → cascade; quota-hit models skipped per session; manual reset button + 15-min auto-retry |
-| Undo | Zero-cost — intercepted by regex in `main.py` before any AI call |
+| AI fallback | 3-model cascade: `gemini-3-flash-preview` → `gemini-2.5-flash` → `gemini-2.5-flash-lite`; quota errors blacklist model for session; 503 errors fall through without blacklisting |
+| Fallback trigger | Billing error on Claude → cascade; manual reset button + 15-min auto-retry |
+| Undo | Zero-cost regex intercept in `main.py`; DB actions logged with snapshots; undo_last() handles add/complete/uncomplete/delete/update_priority/make_subtask |
 | Storage | SQLite via Python `sqlite3` (no ORM) |
-| Task hierarchy | `parent_id` column; subtasks cascade on complete/delete |
+| Task hierarchy | `parent_id` column; subtasks cascade on complete/delete; make_subtask via chat |
+| Task ordering | `sort_order` column; drag-and-drop sets order via `POST /api/tasks/reorder`; new tasks append at end |
 | Chat history | Server-side `chat_log` SQLite table — persists across all browser sessions and restarts |
-| Priority editing | Click any priority badge → floating dropdown → `POST /api/tasks/:id/priority` |
+| Priority editing | Click badge → floating dropdown → `POST /api/tasks/:id/priority`; or say "set task N to high priority" |
 | How to start server | `python3 -m uvicorn main:app --reload --port 8000` in Terminal |
 
 ## Pending Decisions (No Rush, Needed Before Phase 2)
@@ -281,5 +282,31 @@ Key files:
 
 **Architecture diagrams:**
 - `static/diagram.html` — Mermaid.js Module Map + Chat Message Flow diagrams on dark-themed page
+
+**Phase 1 status:** Task parser ✅ | Calendar connector ⬜ | SQLite store ✅ | Scheduler ⬜ | Web UI ✅
+
+---
+
+### Session 5 — make_subtask + update_priority via chat + drag-and-drop
+
+**Root cause of "Jarvees claims it did it but nothing changed":**
+- The AI system prompt had no `make_subtask` or `update_priority` actions
+- AI returned `"action":"chat"` with a plausible message — but no DB write happened
+- Fixed by adding both actions to `SYSTEM_PROMPT`, DB functions, and `main.py` handlers
+
+**New AI actions:**
+- `make_subtask`: `{"action":"make_subtask","task_number":5,"parent_number":4}` → `db.make_subtask(child_id, parent_id)`; clears sort_order; undo_last() restores parent_id + sort_order
+- `update_priority`: `{"action":"update_priority","task_number":6,"priority":"high"}` → `db.update_task_priority()`; undo_last() now also handles this action type (was silently ignored before)
+- `_resolve_by_number()` helper added to `main.py` for direct numeric task resolution
+
+**Gemini 503 cascade fix:**
+- `_is_gemini_transient_error()` catches 503/UNAVAILABLE/overloaded — falls through to next model without blacklisting (quota errors still blacklist for the session)
+
+**Drag-and-drop task reordering:**
+- `sort_order INTEGER` column added to tasks table (auto-migrated)
+- `add_task()` auto-assigns sort_order = max+1 for top-level tasks
+- `get_active_tasks()` orders by sort_order first; NULL falls back to old logic
+- `db.reorder_tasks(ordered_ids)` + `POST /api/tasks/reorder` endpoint
+- UI: `⠿` drag handle on every task card; HTML5 DnD with upper/lower-half detection; `drag-before`/`drag-after` border indicators; optimistic DOM move + async persist; reverts on error
 
 **Phase 1 status:** Task parser ✅ | Calendar connector ⬜ | SQLite store ✅ | Scheduler ⬜ | Web UI ✅

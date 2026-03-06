@@ -629,6 +629,38 @@
     .confirm-btn:hover:not(:disabled) { background: var(--brand); color: #fff; }
     .confirm-btn:disabled { opacity: .4; cursor: default; }
 
+    /* ── Queued message bubble ───────────────────────────────────────────── */
+    .msg.queued {
+      background: #fff7ed;
+      color: #92400e;
+      border: 1px solid #fed7aa;
+    }
+    .queue-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 4px;
+    }
+    .queue-status {
+      font-size: 11px;
+      color: #92400e;
+      font-weight: 500;
+    }
+    .queue-cancel-btn {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 5px;
+      border: 1px solid #fed7aa;
+      background: none;
+      color: #b45309;
+      cursor: pointer;
+      font-family: inherit;
+      font-weight: 500;
+      transition: all .15s;
+    }
+    .queue-cancel-btn:hover { background: #fef3c7; }
+    .queue-cancel-btn:disabled { opacity: .4; cursor: default; }
+
     /* ── Toast ───────────────────────────────────────────────────────────── */
     #toast {
       position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
@@ -1117,7 +1149,12 @@ async function sendChat() {
     // Update frontend's failure map from what the server actually tried
     updateFailedModelsFromLog(result.cascade_log);
 
-    if (result.action === 'confirm') {
+    if (result.action === 'queued') {
+      // All models unavailable — request queued for automatic retry
+      addQueuedMsg(result.queue_id, result.message);
+      _trackedQueueIds.add(result.queue_id);
+      _startQueuePolling();
+    } else if (result.action === 'confirm') {
       // AI is unsure — show labeled options for the user to pick
       addConfirmMsg(result.message, result.options || [], result.cascade_log);
     } else {
@@ -1274,6 +1311,10 @@ async function refreshClaude() {
     _frontendFailedModels.clear();
     _currentModel = 'claude';
     btn.style.display = 'none';
+    // Queue was cleared server-side — remove any pending bubbles from UI
+    _trackedQueueIds.forEach(id => _removeQueuedBubble(id));
+    _trackedQueueIds.clear();
+    _stopQueuePolling();
     toast('↑ Reset — next message will try the best available model.');
     addMsg('jarvees',
       "I've reset the model fallback. Your next message will start from Claude again — if it's still unavailable I'll cascade down automatically.",
@@ -1530,6 +1571,108 @@ function esc(str) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Request queue — handles "all models unavailable" gracefully
+// When the server returns action="queued", we show an orange bubble and poll
+// GET /api/chat/queue every 10s until the item is done, failed, or cancelled.
+// ═══════════════════════════════════════════════════════════════════════════════
+let _queuePollTimer = null;
+const _trackedQueueIds = new Set();   // queue_ids we are actively waiting on
+
+function addQueuedMsg(queueId, statusText) {
+  const box  = document.getElementById('chatMessages');
+  const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const wrap = document.createElement('div');
+  wrap.className = 'msg-wrap jarvees';
+  wrap.dataset.queueId = queueId;
+
+  wrap.innerHTML = `
+    <div class="msg queued">⏳ ${esc(statusText)}</div>
+    <div class="queue-actions">
+      <span class="queue-status" id="qstatus-${queueId}">Waiting to retry…</span>
+      <button class="queue-cancel-btn" id="qcancel-${queueId}"
+        onclick="cancelQueue(${queueId})">Cancel</button>
+    </div>
+    <span class="msg-time">${time}</span>`;
+
+  box.appendChild(wrap);
+  box.scrollTop = box.scrollHeight;
+}
+
+function _updateQueueStatus(queueId, text) {
+  const el = document.getElementById(`qstatus-${queueId}`);
+  if (el) el.textContent = text;
+}
+
+function _removeQueuedBubble(queueId) {
+  const wrap = document.querySelector(`[data-queue-id="${queueId}"]`);
+  if (wrap) wrap.remove();
+}
+
+async function cancelQueue(queueId) {
+  const btn = document.getElementById(`qcancel-${queueId}`);
+  if (btn) btn.disabled = true;
+  try {
+    await api(`/api/chat/queue/${queueId}`, { method: 'DELETE' });
+    _removeQueuedBubble(queueId);
+    _trackedQueueIds.delete(queueId);
+    if (_trackedQueueIds.size === 0) _stopQueuePolling();
+    toast('Request cancelled.');
+  } catch {
+    if (btn) btn.disabled = false;
+    toast('Could not cancel — it may have already completed.');
+  }
+}
+
+function _startQueuePolling() {
+  if (_queuePollTimer) return;   // already polling
+  _queuePollTimer = setInterval(_pollQueue, 10_000);
+}
+
+function _stopQueuePolling() {
+  if (_queuePollTimer) { clearInterval(_queuePollTimer); _queuePollTimer = null; }
+}
+
+async function _pollQueue() {
+  if (_trackedQueueIds.size === 0) { _stopQueuePolling(); return; }
+  try {
+    const items = await api('/api/chat/queue');
+    for (const item of items) {
+      if (!_trackedQueueIds.has(item.id)) continue;
+
+      if (item.status === 'pending' || item.status === 'processing') {
+        const retries = item.retries;
+        _updateQueueStatus(item.id,
+          retries > 0 ? `Retried ${retries}× — waiting…` : 'Waiting to retry…'
+        );
+        continue;
+      }
+
+      // Terminal state — remove from tracking
+      _trackedQueueIds.delete(item.id);
+      _removeQueuedBubble(item.id);
+
+      if (item.status === 'done' && item.result_json) {
+        const result = JSON.parse(item.result_json);
+        addMsg('jarvees', result.message || 'Done.', result.model, result.cascade_log);
+        handleModelState(result.model);
+        await loadTasks();
+        toast('✓ Queued request completed.');
+      } else if (item.status === 'failed') {
+        const errData = item.result_json ? JSON.parse(item.result_json) : {};
+        addMsg('jarvees',
+          `All retries exhausted. ${errData.error || 'AI still unavailable.'} Please try again.`,
+          'error'
+        );
+        toast('Queued request failed after 5 retries.');
+      }
+    }
+    if (_trackedQueueIds.size === 0) _stopQueuePolling();
+  } catch {
+    // Server unreachable — keep polling, will pick up when server returns
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

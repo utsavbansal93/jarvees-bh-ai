@@ -5,7 +5,11 @@ Then open: http://localhost:8000
 """
 
 from __future__ import annotations
+import asyncio
+import json
 import re
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -15,9 +19,55 @@ from pydantic import BaseModel
 import database as db
 import chat_handler
 
-app = FastAPI(title="Jarvees")
-db.init_db()
 
+# ── Background queue retry worker ─────────────────────────────────────────────
+
+async def _process_queue() -> None:
+    """Retry every pending queue item whose next_retry_at has passed."""
+    items = db.get_due_queue_items()
+    for item in items:
+        db.mark_queue_processing(item["id"])
+        try:
+            tasks = db.get_active_tasks()
+            loop = asyncio.get_event_loop()
+            action, model_used, cascade_log = await loop.run_in_executor(
+                None,
+                lambda msg=item["user_message"]: chat_handler.process_message(msg, tasks),
+            )
+            result = _execute_action(action, tasks, model_used, cascade_log)
+            db.save_chat_message("jarvees", result["message"], model_used)
+            db.complete_queue_item(item["id"], json.dumps(result))
+        except Exception as e:
+            retries = item["retries"] + 1
+            if retries >= db.MAX_RETRIES:
+                db.fail_queue_item(item["id"], str(e))
+            else:
+                delay_mins = min(2 ** retries, 30)
+                next_retry = (datetime.utcnow() + timedelta(minutes=delay_mins)).strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+                db.requeue_item(item["id"], retries, next_retry)
+
+
+async def _queue_retry_worker() -> None:
+    while True:
+        await asyncio.sleep(60)
+        await _process_queue()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    db.init_db()
+    task = asyncio.create_task(_queue_retry_worker())
+    yield
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+app = FastAPI(title="Jarvees", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
@@ -106,12 +156,29 @@ def undo_available():
 @app.post("/api/model/reset")
 def model_reset():
     """
-    Reset all AI failure flags.
+    Reset all AI failure flags and clear the request queue.
     The next chat message will start from Claude again.
-    Returns which model is *expected* to be active after reset.
     """
     chat_handler.reset_claude_flag()
+    db.clear_queue()
     return {"ok": True, "model": "claude"}
+
+
+# ── Request queue ──────────────────────────────────────────────────────────────
+
+@app.get("/api/chat/queue")
+def get_queue():
+    """Poll for queue status — frontend calls this every 10s."""
+    return db.get_all_queue_items()
+
+
+@app.delete("/api/chat/queue/{queue_id}")
+def cancel_queue_item(queue_id: int):
+    """Cancel a queued request the user no longer wants."""
+    cancelled = db.cancel_queue_item(queue_id)
+    if not cancelled:
+        raise HTTPException(404, "Queue item not found or already processed")
+    return {"ok": True}
 
 
 @app.get("/api/model/stats")
@@ -173,6 +240,29 @@ def chat(body: ChatRequest):
     try:
         action, model_used, cascade_log = chat_handler.process_message(body.message, tasks)
     except Exception as e:
+        # ── All models unavailable → queue the request for retry ─────────────
+        if "all ai models" in str(e).lower():
+            if db.get_queue_depth() >= 5:
+                msg = (
+                    "All AI models are unavailable and the queue is full (5 items). "
+                    "Please wait a few minutes and try again."
+                )
+                db.save_chat_message("jarvees", msg, "error")
+                return {"action": "chat", "message": msg, "model": "error", "cascade_log": []}
+            queue_id = db.queue_request(body.message)
+            msg = (
+                "All AI models are currently unavailable. "
+                "I've queued your request and will retry automatically — "
+                "you'll see the result here as soon as one comes back online."
+            )
+            return {
+                "action":    "queued",
+                "queue_id":  queue_id,
+                "message":   msg,
+                "model":     "system",
+                "cascade_log": [],
+            }
+        # ── Any other unexpected error → surface it immediately ───────────────
         err_msg = f"Something went wrong on my end: {e}"
         db.save_chat_message("jarvees", err_msg, "error")
         return {

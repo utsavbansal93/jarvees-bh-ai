@@ -55,6 +55,17 @@ def init_db():
                 created_at    TEXT DEFAULT (datetime('now'))
             )
         """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS queued_requests (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_message  TEXT    NOT NULL,
+                queued_at     TEXT    DEFAULT (datetime('now')),
+                status        TEXT    DEFAULT 'pending',
+                result_json   TEXT,
+                retries       INTEGER DEFAULT 0,
+                next_retry_at TEXT    DEFAULT (datetime('now'))
+            )
+        """)
         # Migrate existing DBs
         existing = [r[1] for r in c.execute("PRAGMA table_info(tasks)").fetchall()]
         if "parent_id" not in existing:
@@ -430,6 +441,96 @@ def merge_tasks(task_id_a: int, task_id_b: int, merged_title: str) -> dict | Non
         c.execute("UPDATE tasks SET parent_id=?, sort_order=NULL WHERE id=?", (parent_id, task_id_b))
 
         return _row(c, parent_id)
+
+
+# ── Request queue ─────────────────────────────────────────────────────────────
+
+MAX_RETRIES = 5
+
+
+def get_queue_depth() -> int:
+    """Count of items still waiting to be processed (not yet done/failed/cancelled)."""
+    with _conn() as c:
+        return c.execute(
+            "SELECT COUNT(*) FROM queued_requests WHERE status IN ('pending', 'processing')"
+        ).fetchone()[0]
+
+
+def queue_request(user_message: str) -> int:
+    """Insert a new pending request and return its id."""
+    with _conn() as c:
+        cur = c.execute(
+            "INSERT INTO queued_requests (user_message) VALUES (?)",
+            (user_message,)
+        )
+        return cur.lastrowid
+
+
+def get_all_queue_items() -> list[dict]:
+    """All items the frontend cares about (everything except cancelled)."""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT * FROM queued_requests WHERE status != 'cancelled' ORDER BY id"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_due_queue_items() -> list[dict]:
+    """Pending items whose next_retry_at is now or past — ready to retry."""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT * FROM queued_requests "
+            "WHERE status = 'pending' AND next_retry_at <= datetime('now') "
+            "ORDER BY id"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def mark_queue_processing(item_id: int) -> None:
+    with _conn() as c:
+        c.execute(
+            "UPDATE queued_requests SET status='processing' WHERE id=?", (item_id,)
+        )
+
+
+def complete_queue_item(item_id: int, result_json: str) -> None:
+    with _conn() as c:
+        c.execute(
+            "UPDATE queued_requests SET status='done', result_json=? WHERE id=?",
+            (result_json, item_id)
+        )
+
+
+def fail_queue_item(item_id: int, error_msg: str) -> None:
+    with _conn() as c:
+        c.execute(
+            "UPDATE queued_requests SET status='failed', result_json=? WHERE id=?",
+            (json.dumps({"error": error_msg}), item_id)
+        )
+
+
+def requeue_item(item_id: int, retries: int, next_retry_at: str) -> None:
+    with _conn() as c:
+        c.execute(
+            "UPDATE queued_requests SET status='pending', retries=?, next_retry_at=? WHERE id=?",
+            (retries, next_retry_at, item_id)
+        )
+
+
+def cancel_queue_item(item_id: int) -> bool:
+    with _conn() as c:
+        c.execute(
+            "UPDATE queued_requests SET status='cancelled' "
+            "WHERE id=? AND status IN ('pending', 'processing')",
+            (item_id,)
+        )
+        return c.execute("SELECT changes()").fetchone()[0] > 0
+
+
+def clear_queue() -> None:
+    """Delete the entire queue (called on model reset)."""
+    with _conn() as c:
+        c.execute("DELETE FROM queued_requests")
 
 
 def split_task(task_id: int, subtasks: list[dict]) -> dict | None:

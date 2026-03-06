@@ -12,9 +12,12 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 pip3 install fastapi "uvicorn[standard]" anthropic python-dotenv -q
 
 echo ""
-echo "  Open in browser: http://localhost:8000"
-echo "  Stop server:     Ctrl+C"
+LOCAL_IP=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || echo "unknown")
+
+echo "  Open on this Mac:  http://localhost:8000"
+echo "  Open on iPhone:    http://$LOCAL_IP:8000"
+echo "  Stop server:       Ctrl+C"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-python3 -m uvicorn main:app --reload --port 8000
+python3 -m uvicorn main:app --reload --port 8000 --host 0.0.0.0

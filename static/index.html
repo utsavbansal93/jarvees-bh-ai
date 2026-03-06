@@ -917,12 +917,16 @@ async function doUndo() {
 // 'model-gemini' CSS class so they all get the same yellow styling.
 // ═══════════════════════════════════════════════════════════════════════════════
 const MODEL_LABELS = {
-  claude:                   '✦ Claude',
-  'gemini-3-flash-preview': '✦ Gemini 3',
-  'gemini-2.5-flash':       '✦ Gemini 2.5',
-  'gemini-2.5-flash-lite':  '✦ Gemini 2.5 Lite',
-  system:                   'System',
-  error:                    '⚠ Error',
+  claude:                                  '✦ Claude',
+  'gemini-3.1-flash-lite-preview':         '✦ Gemini 3.1 Lite',
+  'gemini-3-flash-preview':                '✦ Gemini 3',
+  'gemini-2.5-pro':                        '✦ Gemini 2.5 Pro',
+  'gemini-2.5-flash':                      '✦ Gemini 2.5',
+  'gemini-2.5-flash-lite':                 '✦ Gemini 2.5 Lite',
+  'gemini-2.5-flash-lite-preview-09-2025': '✦ Gemini 2.5 Lite Sep',
+  'gemini-2.0-flash':                      '✦ Gemini 2.0',
+  system:                                  'System',
+  error:                                   '⚠ Error',
 };
 
 function modelCssClass(model) {
@@ -939,7 +943,16 @@ function modelCssClass(model) {
 // in the typing indicator before the response comes back.
 // Updated from cascade_log on every response; cleared on model reset.
 // ═══════════════════════════════════════════════════════════════════════════════
-const FRONTEND_CASCADE = ['claude', 'gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'];
+const FRONTEND_CASCADE = [
+  'claude',
+  'gemini-3.1-flash-lite-preview',
+  'gemini-3-flash-preview',
+  'gemini-2.5-pro',
+  'gemini-2.5-flash',
+  'gemini-2.5-flash-lite',
+  'gemini-2.5-flash-lite-preview-09-2025',
+  'gemini-2.0-flash',
+];
 let _frontendFailedModels = new Set();
 let _pendingConfirmOptions = [];  // options from the last confirm action
 

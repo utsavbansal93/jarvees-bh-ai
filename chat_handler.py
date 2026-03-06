@@ -2,7 +2,7 @@
 Jarvees — Chat Command Handler
 
 Model cascade (best to fallback):
-  claude-sonnet-4-6 → gemini-3-flash-preview → gemini-2.5-flash → gemini-2.5-flash-lite
+  claude-sonnet-4-6 → gemini-3.1-flash-lite-preview → gemini-3-flash-preview → gemini-2.5-pro → gemini-2.5-flash → gemini-2.5-flash-lite → gemini-2.5-flash-lite-preview-09-2025 → gemini-2.0-flash
 
 Any model that fails is tracked in _failed_models:
   - Permanent failures (billing / quota): skipped for the entire session until reset.
@@ -50,9 +50,13 @@ TRANSIENT_COOLDOWN_SECS = 300   # 5 minutes
 # ── Model cascade order ────────────────────────────────────────────────────────
 
 GEMINI_CASCADE = [
-    "gemini-3-flash-preview",   # newest — best quality, may have preview instability
-    "gemini-2.5-flash",         # balanced speed and intelligence
-    "gemini-2.5-flash-lite",    # most generous free-tier limits
+    "gemini-3.1-flash-lite-preview",        # newest lite — fast, low cost
+    "gemini-3-flash-preview",               # Gemini 3 full flash
+    "gemini-2.5-pro",                       # most capable 2.5 model
+    "gemini-2.5-flash",                     # balanced speed and intelligence
+    "gemini-2.5-flash-lite",                # lightweight 2.5
+    "gemini-2.5-flash-lite-preview-09-2025",# preview variant with extended quota
+    "gemini-2.0-flash",                     # stable fallback
 ]
 
 CASCADE = ["claude"] + GEMINI_CASCADE  # full ordered cascade including Claude

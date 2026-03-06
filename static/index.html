@@ -640,6 +640,101 @@
       z-index: 100;
     }
     #toast.show { opacity: 1; }
+
+    /* ── Mobile tabs (hidden on desktop) ────────────────────────────────── */
+    .mobile-tabs { display: none; }
+
+    @media (max-width: 640px) {
+      /* Tab bar */
+      .mobile-tabs {
+        display: flex;
+        background: var(--card);
+        border-bottom: 1px solid var(--border);
+        flex-shrink: 0;
+        z-index: 10;
+      }
+      .mobile-tab {
+        flex: 1;
+        padding: 11px 8px;
+        border: none;
+        background: none;
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--muted);
+        cursor: pointer;
+        border-bottom: 3px solid transparent;
+        transition: all .15s;
+        font-family: inherit;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+      }
+      .mobile-tab.active {
+        color: var(--brand);
+        border-bottom-color: var(--brand);
+        background: var(--brand-light);
+      }
+      .mobile-tab-count {
+        background: var(--brand);
+        color: #fff;
+        font-size: 10px;
+        font-weight: 700;
+        padding: 1px 6px;
+        border-radius: 99px;
+        min-width: 18px;
+        text-align: center;
+        display: inline-block;
+      }
+      .mobile-tab-count:empty { display: none; }
+
+      /* Main layout: single column, panels toggled by JS */
+      main {
+        display: flex;
+        flex-direction: column;
+        grid-template-columns: unset;
+      }
+      .task-panel,
+      .chat-panel {
+        display: none;
+        flex: 1;
+        overflow: hidden;
+        border-right: none;
+      }
+      .task-panel.mobile-active,
+      .chat-panel.mobile-active {
+        display: flex;
+      }
+
+      /* Compact header */
+      header { padding: 0 14px; height: 50px; }
+      .logo { font-size: 16px; }
+      .logo span { display: none; }
+      .btn { padding: 5px 9px; font-size: 12px; gap: 3px; }
+
+      /* Task panel */
+      .panel-head { padding: 12px 14px 10px; }
+      .task-scroll { padding: 12px 14px; }
+
+      /* Chat panel */
+      .chat-head { padding: 11px 14px; }
+      .chat-messages { padding: 12px 14px; }
+      .chat-input-row {
+        padding: 10px 14px;
+        padding-bottom: max(10px, env(safe-area-inset-bottom));
+      }
+
+      /* Wider message bubbles on narrow screens */
+      .msg { max-width: 92%; font-size: 13px; }
+      .confirm-options { max-width: 92%; }
+
+      /* Toast above home bar */
+      #toast { bottom: max(20px, env(safe-area-inset-bottom, 20px)); }
+
+      /* Archive modal slides up from bottom */
+      .overlay { padding: 0; align-items: flex-end; }
+      .modal { border-radius: 16px 16px 0 0; max-width: 100%; max-height: 85vh; }
+    }
   </style>
 </head>
 <body>
@@ -659,6 +754,16 @@
     </button>
   </div>
 </header>
+
+<!-- ── Mobile tab bar (hidden on desktop via CSS) ──────────────────────────── -->
+<nav class="mobile-tabs" id="mobileTabs">
+  <button class="mobile-tab active" data-tab="chat" onclick="switchTab('chat')">
+    💬 Chat
+  </button>
+  <button class="mobile-tab" data-tab="tasks" onclick="switchTab('tasks')">
+    ✓ Tasks <span class="mobile-tab-count" id="mobileTaskCount"></span>
+  </button>
+</nav>
 
 <!-- ── Main ────────────────────────────────────────────────────────────────── -->
 <main>
@@ -795,6 +900,9 @@ function renderTasks() {
 
   const active = tasks.filter(t => t.status === 'active').length;
   pill.textContent = active;
+  // Update mobile tab badge
+  const mobilePill = document.getElementById('mobileTaskCount');
+  if (mobilePill) mobilePill.textContent = active > 0 ? active : '';
 
   if (tasks.length === 0) {
     scroll.innerHTML = `
@@ -996,6 +1104,7 @@ async function sendChat() {
   document.getElementById('sendBtn').disabled = true;
 
   addMsg('user', msg);
+  if (isMobile() && _activeTab !== 'chat') switchTab('chat');
   const typingId = addTyping();
 
   try {
@@ -1424,6 +1533,37 @@ function esc(str) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Mobile tab switching
+// ═══════════════════════════════════════════════════════════════════════════════
+let _activeTab = 'chat';
+
+function isMobile() { return window.innerWidth <= 640; }
+
+function switchTab(tab) {
+  _activeTab = tab;
+  document.querySelector('.task-panel').classList.toggle('mobile-active', tab === 'tasks');
+  document.querySelector('.chat-panel').classList.toggle('mobile-active', tab === 'chat');
+  document.querySelectorAll('.mobile-tab').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === tab);
+  });
+  // Scroll chat to bottom when switching to it
+  if (tab === 'chat') {
+    const box = document.getElementById('chatMessages');
+    box.scrollTop = box.scrollHeight;
+  }
+}
+
+// On desktop resize from mobile: unhide both panels
+window.addEventListener('resize', () => {
+  if (!isMobile()) {
+    document.querySelector('.task-panel').classList.remove('mobile-active');
+    document.querySelector('.chat-panel').classList.remove('mobile-active');
+  } else {
+    switchTab(_activeTab);
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // 15-minute Claude auto-retry
 // If we're on the Gemini fallback, silently reset the flag every 15 minutes
 // so the next user message gets a fresh attempt at Claude.
@@ -1453,6 +1593,7 @@ setInterval(async () => {
   await loadTasks();
   await loadChatHistory();   // fetch and render previous messages from SQLite
   addMsg('jarvees', "Hey! I'm Jarvees. Tell me what needs to get done and I'll handle the rest. What's on your plate?", 'system');
+  if (isMobile()) switchTab('chat');  // default to chat view on mobile
 })();
 </script>
 </body>

@@ -7,3 +7,5 @@ credentials.json
 token.json
 .venv/
 venv/
+ai_service/node_modules/
+ai_service/package-lock.json

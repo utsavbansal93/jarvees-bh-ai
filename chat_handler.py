@@ -21,6 +21,8 @@ from __future__ import annotations
 import json
 import os
 import time
+import urllib.request
+import urllib.error
 from collections import deque
 from datetime import date
 
@@ -260,6 +262,36 @@ def get_failed_model_state() -> dict:
     return state
 
 
+_NODE_SERVICE_URL = "http://localhost:3100"
+
+
+def _try_node_service(system_prompt: str, user_content: str) -> tuple[dict, str, list] | None:
+    """
+    Attempt to call the Node.js AI cascade service (port 3100).
+
+    The service uses claude-code-bridge (Claude via OAuth token — no API key) and
+    ai-model-cascade for orchestration.  Returns (action_dict, model_used, cascade_log)
+    on success, or None on any failure so the Python cascade can take over.
+    """
+    try:
+        payload = json.dumps({
+            "system_prompt": system_prompt,
+            "user_message":  user_content,
+        }).encode()
+        req = urllib.request.Request(
+            f"{_NODE_SERVICE_URL}/chat",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = json.loads(resp.read())
+        action = _parse_json(data["text"])
+        return action, data["model"], data.get("cascade_log", [])
+    except Exception:
+        return None
+
+
 def process_message(user_message: str, current_tasks: list[dict]) -> tuple[dict, str, list]:
     """
     Parse a natural-language command and return (action_dict, model_used, cascade_log).
@@ -267,6 +299,9 @@ def process_message(user_message: str, current_tasks: list[dict]) -> tuple[dict,
     cascade_log is a list of dicts, one per model attempted:
       {"model": "claude", "failed": True, "reason": "billing", "elapsed_s": 0.3}
       {"model": "gemini-3-flash-preview", "failed": False, "elapsed_s": 1.4}
+
+    Tries the Node.js AI cascade service (port 3100) first.  Falls back to the
+    Python-native cascade if the Node service is not running or returns an error.
     """
     # Build task context
     if current_tasks:
@@ -280,7 +315,14 @@ def process_message(user_message: str, current_tasks: list[dict]) -> tuple[dict,
         task_context = "\n\nCurrent task list: (empty)"
 
     full_user_content = user_message + task_context
+    system_prompt     = SYSTEM_PROMPT.format(today=date.today().isoformat())
 
+    # ── Try Node.js AI cascade service first (claude-code-bridge + ai-model-cascade) ──
+    node_result = _try_node_service(system_prompt, full_user_content)
+    if node_result is not None:
+        return node_result
+
+    # ── Python-native cascade fallback ────────────────────────────────────────
     cascade_log: list[dict] = []
 
     for model_id in CASCADE:
@@ -295,7 +337,7 @@ def process_message(user_message: str, current_tasks: list[dict]) -> tuple[dict,
                 response = _anthropic().messages.create(
                     model="claude-sonnet-4-6",
                     max_tokens=1500,
-                    system=SYSTEM_PROMPT.format(today=date.today().isoformat()),
+                    system=system_prompt,
                     messages=[{"role": "user", "content": full_user_content}],
                 )
                 raw = response.content[0].text

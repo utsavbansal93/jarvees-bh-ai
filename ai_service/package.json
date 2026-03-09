@@ -1,0 +1,15 @@
+{
+  "name": "jarvees-ai-service",
+  "version": "1.0.0",
+  "description": "Node.js AI cascade service for Jarvees — uses claude-code-bridge + ai-model-cascade",
+  "type": "module",
+  "scripts": {
+    "start": "node --env-file-if-exists=../.env service.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.21.0",
+    "ai-model-cascade": "github:utsavbansal93/ai-model-cascade",
+    "claude-code-bridge": "github:utsavbansal93/claude-code-bridge",
+    "express": "^4.18.2"
+  }
+}

@@ -1,0 +1,32 @@
+#!/bin/bash
+# Jarvees.app — launcher
+# Resolves the project dir from the .app bundle location, starts the server,
+# and opens the browser once it's ready.
+
+MACOS_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$MACOS_DIR/../../../" && pwd)"
+
+# If server is already running, just open the browser and exit
+if curl -s --max-time 1 http://localhost:8000 > /dev/null 2>&1; then
+    open "http://localhost:8000"
+    exit 0
+fi
+
+# Open a new Terminal window running start.sh
+osascript <<APPLESCRIPT
+tell application "Terminal"
+    activate
+    do script "cd '$PROJECT_DIR' && bash start.sh"
+end tell
+APPLESCRIPT
+
+# Open browser as soon as the server responds (polls every second, max 60s)
+(
+    for i in $(seq 1 60); do
+        sleep 1
+        if curl -s --max-time 1 http://localhost:8000 > /dev/null 2>&1; then
+            open "http://localhost:8000"
+            break
+        fi
+    done
+) &

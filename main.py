@@ -7,6 +7,7 @@ Then open: http://localhost:8000
 from __future__ import annotations
 import asyncio
 import json
+import os
 import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -204,6 +205,45 @@ def get_chat_history():
     return db.get_chat_history()
 
 
+# ── Feature requests ───────────────────────────────────────────────────────────
+
+class FeatureRequestBody(BaseModel):
+    capability: str
+    user_example: str
+
+@app.post("/api/feature-request")
+def add_feature_request(body: FeatureRequestBody):
+    """
+    Append a user feature request to FEATURE_REQUESTS.md.
+    Claude Code reads this file in future sessions to create GitHub issues.
+    """
+    filepath = "FEATURE_REQUESTS.md"
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    if not os.path.exists(filepath):
+        with open(filepath, "w") as f:
+            f.write(
+                "# Jarvees — User Feature Requests\n\n"
+                "Auto-logged when users request capabilities that don't exist yet.\n"
+                "Read this file to create GitHub issues for the most-requested features.\n\n"
+                "---\n"
+            )
+
+    entry = (
+        f"\n### [{timestamp}] {body.capability}\n"
+        f"**User said:** \"{body.user_example}\"\n"
+        f"**Status:** open\n\n"
+        f"---\n"
+    )
+    with open(filepath, "a") as f:
+        f.write(entry)
+
+    return {
+        "ok": True,
+        "message": f"Logged. I've added '{body.capability}' to the feature backlog — we'll pick it up in a future session.",
+    }
+
+
 # ── Chat ──────────────────────────────────────────────────────────────────────
 
 class ChatRequest(BaseModel):
@@ -274,8 +314,8 @@ def chat(body: ChatRequest):
 
     result = _execute_action(action, tasks, model_used, cascade_log)
 
-    # Persist Jarvees' reply — but not confirm prompts (those are pure UI state)
-    if result["action"] != "confirm":
+    # Persist Jarvees' reply — skip transient UI-state actions
+    if result["action"] not in ("confirm", "feature_request"):
         db.save_chat_message("jarvees", result["message"], model_used)
 
     return result
@@ -406,6 +446,11 @@ def _execute_action(
     # ── Confirm (AI is uncertain — present options to user) ───────────────────
     elif a == "confirm":
         result["options"] = action.get("options", [])
+
+    # ── Feature request (capability doesn't exist yet) ────────────────────────
+    elif a == "feature_request":
+        result["capability"]   = action.get("capability", "")
+        result["user_example"] = action.get("user_example", "")
 
     # ── Undo via AI (catch-all for "please undo" phrased differently) ─────────
     elif a == "undo":

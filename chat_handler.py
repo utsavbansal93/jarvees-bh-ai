@@ -164,6 +164,17 @@ Return ONLY a valid JSON object. Choose the right action:
 ── CONFIRM (when request is genuinely ambiguous — present 2-3 options) ──
 {{"action":"confirm","options":[{{"label":"Option A description","action":{{"action":"add_task","task":{{...}},"message":"..."}}}},{{"label":"Option B description","action":{{"action":"delete_task","task_number":2,"message":"..."}}}}],"message":"Which did you mean?"}}
 
+── FEATURE REQUEST (user wants a capability Jarvees doesn't have yet) ──
+{{"action":"feature_request","capability":"concise name of the missing feature","user_example":"the user's request verbatim or near-verbatim","message":"I can't [do X] yet — that's not something I support right now. Want me to log this as a feature request for a future session?"}}
+Use feature_request when the user clearly wants a Jarvees-style capability that doesn't exist:
+- Push, SMS, email, or WhatsApp notifications/reminders
+- Google Calendar reading or syncing (not connected yet)
+- Telegram bot, Siri, Alexa, or voice input
+- Location-based reminders or triggers
+- Nightly summaries, escalation messages, or scheduled check-ins
+- Integrations with other apps or services
+Do NOT use for: typos, off-topic questions, or anything Jarvees already handles (tasks, subtasks, priorities, deadlines, reordering, merging, splitting).
+
 ── INFORMATIONAL (no list change) ──
 {{"action":"chat","message":"..."}}
 
